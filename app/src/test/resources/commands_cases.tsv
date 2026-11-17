@@ -1,0 +1,18 @@
+# intent<TAB>phrase<TAB>platforms (all / android / pc). Shared by the phone (CommandsTest.kt) and the PC (test_shared_cases.py).
+scroll_down	انزل	all
+scroll_down	نزل لتحت	all
+scroll_down	scroll down	all
+scroll_up	اطلع	all
+scroll_up	لفوق	all
+scroll_up	scroll up	all
+volume_up	علي الصوت	all
+volume_up	ارفع الصوت	all
+volume_up	volume up	all
+volume_down	وطي الصوت	all
+volume_down	اخفض الصوت	all
+volume_down	volume down	all
+time	كم الساعة	all
+time	الساعة كم	all
+time	what time	all
+search:قطط	ابحث عن قطط	all
+search:cats	search for cats	all

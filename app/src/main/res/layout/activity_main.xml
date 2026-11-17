@@ -1,0 +1,1327 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.drawerlayout.widget.DrawerLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/drawer"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg"
+    android:layoutDirection="rtl">
+
+    <!-- ============================================================ home screen -->
+    <LinearLayout
+        android:id="@+id/main"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <!-- top bar: settings button on the right (the drawer opens from that side), name, live status -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageButton
+                android:id="@+id/btnSettings"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="@drawable/bg_icon_btn"
+                android:contentDescription="الإعدادات"
+                android:src="@drawable/ic_menu"
+                app:tint="@color/on_surface" />
+
+            <ImageView
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="12dp"
+                android:background="@drawable/bg_logo"
+                android:importantForAccessibility="no"
+                android:padding="2dp"
+                android:src="@drawable/johnny_logo" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="جوني"
+                    android:textColor="@color/on_surface"
+                    android:textSize="21sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="هاتفك بصوتك، بدون لمس"
+                    android:textColor="@color/muted"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_chip"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="12dp"
+                android:paddingTop="7dp"
+                android:paddingEnd="12dp"
+                android:paddingBottom="7dp">
+
+                <View
+                    android:id="@+id/statusDot"
+                    android:layout_width="8dp"
+                    android:layout_height="8dp"
+                    android:background="@drawable/bg_dot" />
+
+                <TextView
+                    android:id="@+id/statusChip"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:textColor="@color/on_surface"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <ScrollView
+            android:id="@+id/homeScroll"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="14dp"
+            android:layout_weight="1"
+            android:fillViewport="true"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <!-- the microphone -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_hero"
+                    android:orientation="vertical"
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp"
+                    android:paddingBottom="22dp">
+
+                    <FrameLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="210dp">
+
+                        <View
+                            android:id="@+id/micGlow"
+                            android:layout_width="190dp"
+                            android:layout_height="190dp"
+                            android:layout_gravity="center"
+                            android:background="@drawable/bg_glow" />
+
+                        <View
+                            android:id="@+id/micRing"
+                            android:layout_width="150dp"
+                            android:layout_height="150dp"
+                            android:layout_gravity="center"
+                            android:alpha="0"
+                            android:background="@drawable/bg_ring" />
+
+                        <FrameLayout
+                            android:id="@+id/micButton"
+                            android:layout_width="128dp"
+                            android:layout_height="128dp"
+                            android:layout_gravity="center"
+                            android:background="@drawable/bg_mic_off"
+                            android:clickable="true"
+                            android:contentDescription="الميكروفون: تشغيل أو إيقاف الاستماع"
+                            android:focusable="true">
+
+                            <ImageView
+                                android:id="@+id/micIcon"
+                                android:layout_width="54dp"
+                                android:layout_height="54dp"
+                                android:layout_gravity="center"
+                                android:importantForAccessibility="no"
+                                android:src="@drawable/ic_mic" />
+                        </FrameLayout>
+                    </FrameLayout>
+
+                    <TextView
+                        android:id="@+id/status"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:textColor="@color/on_surface"
+                        android:textSize="20sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/hint"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:gravity="center"
+                        android:lineSpacingExtra="3dp"
+                        android:textColor="@color/muted"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <!-- one-tap shortcuts -->
+                <HorizontalScrollView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:scrollbars="none">
+
+                    <LinearLayout
+                        android:id="@+id/chips"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal" />
+                </HorizontalScrollView>
+
+                <!-- first-run checklist -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardSetup"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    app:cardBackgroundColor="@color/primary_container"
+                    app:cardCornerRadius="24dp"
+                    app:cardElevation="0dp"
+                    app:strokeWidth="0dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="18dp">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="لنجهّز جوني"
+                                android:textColor="@color/on_primary_container"
+                                android:textSize="17sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/stepsCount"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:textColor="@color/on_primary_container"
+                                android:textSize="13sp" />
+                        </LinearLayout>
+
+                        <com.google.android.material.progressindicator.LinearProgressIndicator
+                            android:id="@+id/stepsProgress"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:max="100"
+                            app:indicatorColor="@color/primary"
+                            app:trackColor="#33CDEBFA"
+                            app:trackCornerRadius="4dp"
+                            app:trackThickness="6dp" />
+
+                        <LinearLayout
+                            android:id="@+id/stepsList"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:orientation="vertical" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnAccess"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:minHeight="52dp"
+                            android:text="التالي"
+                            app:cornerRadius="14dp" />
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- conversation -->
+                <com.google.android.material.card.MaterialCardView
+                    style="@style/JCard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="18dp">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <TextView
+                                style="@style/JCardTitle"
+                                android:layout_width="0dp"
+                                android:layout_weight="1"
+                                android:text="المحادثة" />
+
+                            <TextView
+                                android:id="@+id/btnClearChat"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:background="?attr/selectableItemBackgroundBorderless"
+                                android:clickable="true"
+                                android:focusable="true"
+                                android:padding="6dp"
+                                android:text="مسح المحادثة"
+                                android:textColor="@color/muted"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/chatList"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:orientation="vertical" />
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- sentences Johnny did not understand -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardLearn"
+                    style="@style/JCard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:visibility="gone">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="18dp">
+
+                        <TextView
+                            style="@style/JCardTitle"
+                            android:text="جمل لم أفهمها — علّمني" />
+
+                        <TextView
+                            style="@style/JNote"
+                            android:text="اضغط على جملة واكتب الأمر الذي كنت تقصده، وسأفهمها من الآن." />
+
+                        <LinearLayout
+                            android:id="@+id/learnList"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:orientation="vertical" />
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- commands guide, folded until asked for -->
+                <com.google.android.material.card.MaterialCardView
+                    style="@style/JCard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:layout_marginBottom="12dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/guideHeader"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:background="?attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:drawablePadding="12dp"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:minHeight="56dp"
+                            android:paddingStart="18dp"
+                            android:paddingEnd="18dp"
+                            android:text="دليل الأوامر"
+                            android:textColor="@color/primary"
+                            android:textSize="14sp"
+                            android:textStyle="bold"
+                            android:drawableEnd="@drawable/ic_expand"
+                            android:drawableStart="@drawable/ic_list"
+                            android:drawableTint="@color/primary" />
+
+                        <LinearLayout
+                            android:id="@+id/guideBody"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:paddingStart="18dp"
+                            android:paddingEnd="18dp"
+                            android:paddingBottom="18dp"
+                            android:visibility="gone" />
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- typed commands -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <EditText
+                android:id="@+id/input"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_input"
+                android:hint="أو اكتب الأمر هنا"
+                android:imeOptions="actionSend"
+                android:importantForAutofill="no"
+                android:inputType="text"
+                android:paddingStart="20dp"
+                android:paddingEnd="20dp"
+                android:textColor="@color/on_surface"
+                android:textColorHint="@color/muted"
+                android:textSize="15sp" />
+
+            <ImageButton
+                android:id="@+id/btnSend"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_send"
+                android:contentDescription="إرسال"
+                android:src="@drawable/ic_send"
+                app:tint="@color/on_primary" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- ============================================================ settings drawer (slides in from the right) -->
+    <LinearLayout
+        android:id="@+id/settingsPanel"
+        android:layout_width="340dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="right"
+        android:background="@drawable/bg_drawer"
+        android:clickable="true"
+        android:focusable="true"
+        android:orientation="vertical"
+        tools:ignore="RtlHardcoded">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="20dp"
+            android:paddingTop="14dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="10dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="الإعدادات"
+                    android:textColor="@color/on_surface"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/versionText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/muted"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/btnCloseSettings"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="إغلاق الإعدادات"
+                android:src="@drawable/ic_close"
+                app:tint="@color/muted" />
+        </LinearLayout>
+
+        <ScrollView
+            android:id="@+id/settingsScroll"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/settingsList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingBottom="16dp">
+
+                <!-- system check: what works and what still needs a tap -->
+                <com.google.android.material.card.MaterialCardView
+                    style="@style/JCard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="16dp"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginEnd="16dp"
+                    android:layout_marginBottom="10dp"
+                    app:cardBackgroundColor="@color/surface_high"
+                    app:cardCornerRadius="20dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="16dp">
+
+                        <TextView
+                            style="@style/JCardTitle"
+                            android:text="حالة النظام" />
+
+                        <LinearLayout
+                            android:id="@+id/diagList"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:orientation="vertical" />
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- 1. general -->
+                <TextView
+                    android:id="@+id/secGeneral"
+                    style="@style/JSection"
+                    android:drawableStart="@drawable/ic_tune"
+                    android:text="عام" />
+
+                <LinearLayout style="@style/JSectionBody">
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:layout_marginTop="0dp"
+                        android:text="لغة الاستماع" />
+
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/langGroup"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        app:selectionRequired="true"
+                        app:singleSelection="true">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnAr"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="العربية" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnEn"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="English" />
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchTones"
+                        style="@style/JSwitch"
+                        android:layout_marginTop="8dp"
+                        android:text="نغمة قصيرة عند الاستيقاظ والتنفيذ" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchBubble"
+                        style="@style/JSwitch"
+                        android:text="الزر العائم فوق التطبيقات" />
+
+                    <TextView
+                        style="@style/JNote"
+                        android:layout_marginTop="0dp"
+                        android:text="ضغطة: تشغيل أو إيقاف الاستماع • ضغطة مطوّلة: فتح التطبيق • اسحبه للأسفل لإزالته" />
+                </LinearLayout>
+
+                <View style="@style/JDivider" />
+
+                <!-- 2. listening -->
+                <TextView
+                    android:id="@+id/secListen"
+                    style="@style/JSection"
+                    android:drawableStart="@drawable/ic_mic"
+                    android:text="الاستماع والصوت" />
+
+                <LinearLayout style="@style/JSectionBody">
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchOffline"
+                        style="@style/JSwitch"
+                        android:text="تفضيل الاستماع دون إنترنت" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnOffline"
+                        style="@style/JTonal"
+                        android:layout_marginTop="0dp"
+                        android:text="فحص وتنزيل حزمة الصوت العربية" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnTrain"
+                        style="@style/JTonal"
+                        android:text="درّب جوني على صوتي (15 جملة)" />
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="Whisper (تجريبي)" />
+
+                    <TextView
+                        style="@style/JNote"
+                        android:text="محرك استماع كامل داخل التطبيق يعمل دون إنترنت. يحتاج ملفات النموذج." />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchWhisper"
+                        style="@style/JSwitch"
+                        android:text="استخدام Whisper بدل محرك Google" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnWhisperFolder"
+                        style="@style/JTonal"
+                        android:layout_marginTop="0dp"
+                        android:text="اختيار مجلد ملفات Whisper ونسخها" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnWhisperCheck"
+                        style="@style/JTonal"
+                        android:text="فحص ملفات Whisper" />
+                </LinearLayout>
+
+                <View style="@style/JDivider" />
+
+                <!-- 3. emergency -->
+                <TextView
+                    android:id="@+id/secEmergency"
+                    style="@style/JSection"
+                    android:drawableStart="@drawable/ic_warning"
+                    android:text="الطوارئ والمرافق" />
+
+                <LinearLayout style="@style/JSectionBody">
+
+                    <TextView
+                        style="@style/JNote"
+                        android:layout_marginTop="0dp"
+                        android:text="قل «ساعدوني» في أي وقت، دون كلمة جوني، فيتصل جوني بهذا الرقم ويرسل له رسالة." />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:hint="رقم المرافق للطوارئ">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/emergencyNumber"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="phone" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:hint="قناة ntfy للطوارئ (اختياري)">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/ntfyTopic"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="text" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+
+                <View style="@style/JDivider" />
+
+                <!-- 4. notifications and calls -->
+                <TextView
+                    android:id="@+id/secNotifs"
+                    style="@style/JSection"
+                    android:drawableStart="@drawable/ic_bell"
+                    android:text="الإشعارات والمكالمات" />
+
+                <LinearLayout style="@style/JSectionBody">
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchReadNotifs"
+                        style="@style/JSwitch"
+                        android:text="قراءة الرسائل والمكالمات الواردة بصوت عالٍ" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnNotifAccess"
+                        style="@style/JTonal"
+                        android:layout_marginTop="0dp"
+                        android:text="منح إذن قراءة الإشعارات" />
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="واتساب" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:hint="رمز الدولة للواتساب (مثل 249)">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/waCc"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="number" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+
+                <View style="@style/JDivider" />
+
+                <!-- 5. understanding -->
+                <TextView
+                    android:id="@+id/secAi"
+                    style="@style/JSection"
+                    android:drawableStart="@drawable/ic_spark"
+                    android:text="الذكاء والفهم" />
+
+                <LinearLayout style="@style/JSectionBody">
+
+                    <TextView
+                        style="@style/JNote"
+                        android:layout_marginTop="0dp"
+                        android:text="اختياري. الجملة التي لا يفهمها جوني محلياً تُرسل إلى الخدمة التي تختارها. بدون عنوان ونموذج لا يُرسل شيء." />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:orientation="horizontal">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnPresetGemini"
+                            style="@style/Widget.Material3.Button.TonalButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="6dp"
+                            android:layout_weight="1"
+                            android:paddingStart="4dp"
+                            android:paddingEnd="4dp"
+                            android:text="Gemini"
+                            android:textSize="13sp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnPresetGroq"
+                            style="@style/Widget.Material3.Button.TonalButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="6dp"
+                            android:layout_weight="1"
+                            android:paddingStart="4dp"
+                            android:paddingEnd="4dp"
+                            android:text="Groq"
+                            android:textSize="13sp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnPresetOllama"
+                            style="@style/Widget.Material3.Button.TonalButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="4dp"
+                            android:paddingEnd="4dp"
+                            android:text="Ollama"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+
+                    <TextView
+                        style="@style/JNote"
+                        android:text="الأزرار تملأ العنوان والنموذج. المفتاح المجاني: aistudio.google.com/apikey لـGemini، وconsole.groq.com لـGroq." />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:hint="عنوان الخدمة">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/aiUrl"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="textUri"
+                            android:textDirection="ltr" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:hint="اسم النموذج">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/aiModel"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="textNoSuggestions"
+                            android:textDirection="ltr" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:hint="مفتاح API"
+                        app:endIconMode="password_toggle">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/aiKey"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="textPassword"
+                            android:textDirection="ltr" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchAiScreen"
+                        style="@style/JSwitch"
+                        android:layout_marginTop="8dp"
+                        android:text="أسمح بإرسال نص الشاشة للنموذج" />
+
+                    <TextView
+                        style="@style/JNote"
+                        android:layout_marginTop="0dp"
+                        android:text="يلزم لـ«لخّص» و«اسأل» ووضع الوكيل. حقول كلمات السر لا تُرسل أبداً." />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchAgent"
+                        style="@style/JSwitch"
+                        android:text="وضع الوكيل: مهمة بعدة خطوات (قل: نفّذ ...)" />
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="نموذج على الهاتف (بلا إنترنت)" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchLlm"
+                        style="@style/JSwitch"
+                        android:text="استخدم النموذج المحلي للجمل غير المفهومة" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLlmPick"
+                        style="@style/JTonal"
+                        android:layout_marginTop="0dp"
+                        android:text="اختر ملف النموذج (.task)" />
+                </LinearLayout>
+
+                <View style="@style/JDivider" />
+
+                <!-- proactive assistant -->
+                <TextView
+                    android:id="@+id/secPro"
+                    style="@style/JSection"
+                    android:drawableStart="@drawable/ic_alarm"
+                    android:text="المساعد الاستباقي" />
+
+                <LinearLayout style="@style/JSectionBody">
+
+                    <TextView
+                        style="@style/JNote"
+                        android:layout_marginTop="0dp"
+                        android:text="جوني يبادر بالكلام: يذكّرك وينتظر «نعم»، يقرأ رسائل من يهمّك فوراً، وينبّهك للبطارية." />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchPro"
+                        style="@style/JSwitch"
+                        android:text="شغّل المساعد الاستباقي" />
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="تذكيرات يومية" />
+
+                    <TextView
+                        style="@style/JNote"
+                        android:text="سطر لكل تذكير: 08:00=الدواء. أو قل: ذكرني بالدواء كل يوم الساعة 8. يسألك «هل فعلتها؟» ويعيد بعد 10 دقائق حتى 3 مرات." />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:hint="08:00=الدواء">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/proReminders"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="textMultiLine"
+                            android:minLines="2" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchProCare"
+                        style="@style/JSwitch"
+                        android:layout_marginTop="6dp"
+                        android:text="أبلغ المرافق برسالة إذا لم تؤكد بعد 3 مرات" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnExactAlarm"
+                        style="@style/JTonal"
+                        android:layout_marginTop="0dp"
+                        android:text="السماح بالتذكير في الوقت الدقيق" />
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="أشخاص مهمّون" />
+
+                    <TextView
+                        style="@style/JNote"
+                        android:text="رسائلهم تُقرأ فوراً حتى لو كانت قراءة الإشعارات متوقفة أو كان وضع الليل مفعّلاً. اسم في كل سطر كما يظهر في الإشعار." />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:hint="مثل: أمي">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/proPeople"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="textMultiLine"
+                            android:minLines="2" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="تنبيهات أخرى" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchProMorning"
+                        style="@style/JSwitch"
+                        android:text="تحية الصباح عند أول فتح للهاتف (5–11 صباحاً)" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchProBattery"
+                        style="@style/JSwitch"
+                        android:text="تنبيه البطارية عند 20% و10% و5%" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:hint="وقت النوم لتذكير الشحن (مثل 22:30)">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/proBedtime"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="text" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+
+                <View style="@style/JDivider" />
+
+                <!-- head pointer -->
+                <TextView
+                    android:id="@+id/secHead"
+                    style="@style/JSection"
+                    android:drawableStart="@drawable/ic_face"
+                    android:text="التحكم بالرأس" />
+
+                <LinearLayout style="@style/JSectionBody">
+
+                    <TextView
+                        style="@style/JNote"
+                        android:layout_marginTop="0dp"
+                        android:text="حرّك دائرة على الشاشة بإمالة رأسك أمام الكاميرا الأمامية، وثبّتها لحظة لتضغط. يعمل داخل الهاتف بالكامل ولا تُحفظ أي صورة." />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnHead"
+                        style="@style/JTonal"
+                        android:text="ابدأ التحكم بالرأس" />
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="السرعة" />
+
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/headSpeedGroup"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        app:selectionRequired="true"
+                        app:singleSelection="true">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/headSlow"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="بطيئة" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/headNormal"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="عادية" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/headFast"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="سريعة" />
+
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="مدة التثبيت للضغط" />
+
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/headDwellGroup"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        app:selectionRequired="true"
+                        app:singleSelection="true">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/dwellShort"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="1 ث" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/dwellMid"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="1.5 ث" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/dwellLong"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="2.5 ث" />
+
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchHeadDwell"
+                        style="@style/JSwitch"
+                        android:layout_marginTop="8dp"
+                        android:text="الضغط بتثبيت الدائرة" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchHeadBlink"
+                        style="@style/JSwitch"
+                        android:text="الضغط بإغماض العينين نصف ثانية" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchHeadInvert"
+                        style="@style/JSwitch"
+                        android:text="عكس الاتجاه الأفقي" />
+
+                    <TextView
+                        style="@style/JNote"
+                        android:text="بالصوت: «شغّل التحكم بالرأس» • «وسّط المؤشر» • «اضغط هنا» • «وقّف التحكم بالرأس». إذا رفض أندرويد التشغيل بالصوت، ابدأه من هذا الزر." />
+                </LinearLayout>
+
+                <View style="@style/JDivider" />
+
+                <!-- 6. smart home -->
+                <TextView
+                    android:id="@+id/secHome"
+                    style="@style/JSection"
+                    android:drawableStart="@drawable/ic_home"
+                    android:text="المنزل الذكي" />
+
+                <LinearLayout style="@style/JSectionBody">
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:layout_marginTop="0dp"
+                        android:hint="عنوان ESP32 مثل 192.168.1.50">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/homeBase"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="textUri"
+                            android:textDirection="ltr" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:hint="كلمة سر الـESP32 (اختياري)"
+                        app:endIconMode="password_toggle">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/homeKey"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="textPassword"
+                            android:textDirection="ltr" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:hint="الأجهزة: اسم=رقم في كل سطر">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/homeDevices"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="textMultiLine"
+                            android:minLines="3" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="المشاهد" />
+
+                    <TextView
+                        style="@style/JNote"
+                        android:text="سطر لكل مشهد، مثل: وقت النوم=ضو:off,مروحة:off" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:hint="اسم المشهد=جهاز:on,جهاز:off">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/scenesBox"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="textMultiLine"
+                            android:minLines="2" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchHomeAlerts"
+                        style="@style/JSwitch"
+                        android:layout_marginTop="8dp"
+                        android:text="سماع تنبيهات المنزل (الدخان، الباب...)" />
+                </LinearLayout>
+
+                <View style="@style/JDivider" />
+
+                <!-- 7. dialect and learning -->
+                <TextView
+                    android:id="@+id/secDialect"
+                    style="@style/JSection"
+                    android:drawableStart="@drawable/ic_chat"
+                    android:text="اللهجة والتعلّم" />
+
+                <LinearLayout style="@style/JSectionBody">
+
+                    <TextView
+                        style="@style/JNote"
+                        android:layout_marginTop="0dp"
+                        android:text="أسرع طريقة: قل «جوني دربني». يقول لك أمراً بالفصحى فتقوله أنت بلهجتك، وما لا يفهمه يحفظه. أو قل: لما أقول ... يعني ..." />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnDialectTrain"
+                        style="@style/JTonal"
+                        android:text="ابدأ تدريب اللهجة بالصوت (دربني)" />
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="قاموس اللهجة" />
+
+                    <TextView
+                        style="@style/JNote"
+                        android:text="علّمه كلماتك. في كل سطر: كلمتك=الكلمة القياسية" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:hint="مثال: شيل=اطفي">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/dialectDict"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="textMultiLine"
+                            android:minLines="2" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="جمل علّمتها لجوني" />
+
+                    <TextView
+                        style="@style/JNote"
+                        android:text="في كل سطر: جملتك=الأمر القياسي" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:hint="مثال: شغل لي الواتس=افتح الواتساب">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/phrasesBox"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="textMultiLine"
+                            android:minLines="2" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnExport"
+                        style="@style/JTonal"
+                        android:layout_marginTop="12dp"
+                        android:text="مشاركة جملي وقاموسي لتحسين اللهجة" />
+                </LinearLayout>
+
+                <View style="@style/JDivider" />
+
+                <!-- 8. battery and safety -->
+                <TextView
+                    android:id="@+id/secPower"
+                    style="@style/JSection"
+                    android:drawableStart="@drawable/ic_lock"
+                    android:text="البطارية والأمان" />
+
+                <LinearLayout style="@style/JSectionBody">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnBattery"
+                        style="@style/JTonal"
+                        android:layout_marginTop="0dp"
+                        android:text="استثناء جوني من توفير البطارية" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchEcoLow"
+                        style="@style/JSwitch"
+                        android:layout_marginTop="6dp"
+                        android:text="أوقف الاستماع عند بطارية 15% أو أقل" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchEcoScreen"
+                        style="@style/JSwitch"
+                        android:text="أوقف الاستماع والشاشة مطفأة دون شاحن" />
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="كلمة السر الصوتية" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchSecret"
+                        style="@style/JSwitch"
+                        android:text="اطلبها قبل الاتصال والرسائل وفتح الباب" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:layout_marginTop="0dp"
+                        android:hint="كلمة السر (كلمة أو رقم سهل النطق)">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/secretBox"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="text" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+
+                <View style="@style/JDivider" />
+
+                <!-- 9. backup -->
+                <TextView
+                    android:id="@+id/secBackup"
+                    style="@style/JSection"
+                    android:drawableStart="@drawable/ic_save"
+                    android:text="النسخ الاحتياطي" />
+
+                <LinearLayout style="@style/JSectionBody">
+
+                    <TextView
+                        style="@style/JNote"
+                        android:layout_marginTop="0dp"
+                        android:text="انقل إعداداتك إلى هاتف آخر. الملف يحوي كلمة السر الصوتية وكلمة سر المنزل، فاحفظه في مكان آمن. مفتاح API لا يُحفظ فيه." />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnSettingsExport"
+                        style="@style/JTonal"
+                        android:text="حفظ الإعدادات في ملف" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnSettingsImport"
+                        style="@style/JTonal"
+                        android:text="استعادة الإعدادات من ملف" />
+                </LinearLayout>
+            </LinearLayout>
+        </ScrollView>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="@color/outline" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnSave"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:layout_marginTop="10dp"
+                android:layout_marginEnd="16dp"
+                android:layout_marginBottom="10dp"
+                android:minHeight="54dp"
+                android:text="حفظ الإعدادات"
+                app:cornerRadius="16dp" />
+        </LinearLayout>
+    </LinearLayout>
+</androidx.drawerlayout.widget.DrawerLayout>

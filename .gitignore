@@ -1,0 +1,32 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# ---- added before publishing on GitHub
+.kotlin/
+/.idea/
+build/
+
+# Whisper model and downloads: too big for GitHub (one file is 116 MB). setup_whisper.ps1 fetches them.
+/whisper-files/
+
+# personal photo used for the old icon; no longer used by the app
+app/src/main/res/drawable-nodpi/johnny_avatar.webp
+app/src/main/res/mipmap-*/johnny_fg.webp
+
+# secrets and signing
+*.jks
+*.keystore
+keystore.properties
