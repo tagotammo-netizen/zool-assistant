@@ -558,6 +558,40 @@
 
                     <TextView
                         style="@style/JLabel"
+                        android:text="طريقة كلام زول" />
+
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/styleGroup"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        app:selectionRequired="true"
+                        app:singleSelection="true">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/styleSudani"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="سوداني" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/styleFusha"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="فصحى" />
+
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+                    <TextView
+                        style="@style/JLabel"
                         android:text="كلمة التنبيه" />
 
                     <com.google.android.material.button.MaterialButtonToggleGroup
@@ -1185,6 +1219,96 @@
                     <TextView
                         style="@style/JNote"
                         android:text="بالصوت: «شغّل التحكم بالرأس» • «وسّط المؤشر» • «اضغط هنا» • «وقّف التحكم بالرأس». إذا رفض أندرويد التشغيل بالصوت، ابدأه من هذا الزر." />
+                </LinearLayout>
+
+                <View style="@style/JDivider" />
+
+                <!-- prayer times -->
+                <TextView
+                    android:id="@+id/secPrayer"
+                    style="@style/JSection"
+                    android:drawableStart="@drawable/ic_moon"
+                    android:text="الصلاة" />
+
+                <LinearLayout style="@style/JSectionBody">
+
+                    <TextView
+                        android:id="@+id/prayerToday"
+                        style="@style/JNote"
+                        android:layout_marginTop="0dp"
+                        android:textColor="@color/on_surface"
+                        android:textSize="14sp" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:hint="المدينة (الخرطوم، أم درمان، بورتسودان، ود مدني…)">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/prayerCity"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="text" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnPrayerLocation"
+                        style="@style/JTonal"
+                        android:text="استخدم موقعي الحالي" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchPrayer"
+                        style="@style/JSwitch"
+                        android:layout_marginTop="8dp"
+                        android:text="نبّهني بأوقات الصلاة" />
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="وقت التنبيه" />
+
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/prayerBeforeGroup"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        app:selectionRequired="true"
+                        app:singleSelection="true">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/beforeNow"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="مع الأذان" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/before10"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="قبل 10 دقايق" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/before15"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="قبل ربع ساعة" />
+
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+                    <TextView
+                        style="@style/JNote"
+                        android:text="الحساب داخل الهاتف بدون إنترنت، بطريقة الهيئة المصرية العامة للمساحة المستعملة في السودان. بالصوت: «متين المغرب؟»، «الصلاة الجاية»، «مواقيت الصلاة»، «ذكرني بالدوا بعد العشا»." />
                 </LinearLayout>
 
                 <View style="@style/JDivider" />

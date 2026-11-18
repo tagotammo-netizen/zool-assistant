@@ -61,6 +61,7 @@ sealed class Cmd {
     data class HeadPause(val on: Boolean) : Cmd()
     object ListReminders : Cmd()
     data class DeleteReminder(val name: String) : Cmd()
+    data class PrayerTime(val prayer: String?) : Cmd()       // null: the next one; "all": today's list; else "MAGHRIB"…
     object Train : Cmd()                                     // "دربني": voice training of the person's own dialect
     data class Teach(val phrase: String, val meaning: String) : Cmd()   // "لما اقول X يعني Y"
     object Hush : Cmd()                                      // "اسكت": stop talking / reading
@@ -137,6 +138,9 @@ object Commands {
         "رسلي" to "ارسل", "ابعت" to "ارسل", "رسلو" to "ارسل",
     )
 
+    /** Minutes of the day of a prayer at the person's place, so "ذكرني بعد المغرب" works. Set by the service. */
+    @Volatile var prayerMinutes: ((PrayerTimes.Prayer) -> Int?)? = null
+
     /** Home devices from settings (normalised, without "ال"), so "شغل المروحة" switches the fan instead of looking for an app. */
     @Volatile var homeDevices: Set<String> = emptySet()
 
@@ -161,7 +165,7 @@ object Commands {
 
     private fun dropBodyLead(body: String) = words(body).dropWhile { normalize(it) in BODY_LEAD }.joinToString(" ")
 
-    private val WANT = setOf("داير", "دايره", "دايرين", "عايز", "عاوز", "اريد", "ابغي", "ابي", "بدي", "want")
+    private val WANT = setOf("داير", "دايره", "دايرين", "عايز", "عاوز", "اريد", "ابغي", "ابي", "بدي", "وديني", "ودني", "خش", "ادخل", "want")
 
     /** Extra words the user taught the app in settings ("كلمة=الكلمة القياسية", one per line). Set by the service. */
     @Volatile var userDict: Map<String, String> = emptyMap()
@@ -187,12 +191,16 @@ object Commands {
     }
 
     private val ANSWER = setOf("اجب", "رد علي المكالمه", "رد علي الاتصال", "رد علي الخط", "استقبل", "استقبل المكالمه", "افتح الخط",
-        "اجب علي المكالمه", "اجب المكالمه", "answer", "answer the call", "answer call", "pick up", "pick up the call")
+        "اجب علي المكالمه", "اجب المكالمه", "ارفع المكالمه", "ارفع الخط", "رد علي التلفون", "رد علي التليفون", "استلم المكالمه",
+        "ارفعها", "رد عليهو", "رد عليها", "answer", "answer the call", "answer call", "pick up", "pick up the call")
     private val HANGUP = setOf("انهي المكالمه", "انه المكالمه", "اقفل المكالمه", "سكر المكالمه", "اقفل الخط", "سكر الخط",
-        "انهي الاتصال", "ارفض", "ارفض المكالمه", "ارفض الاتصال", "رفض", "hang up", "end call", "end the call", "reject", "decline")
-    private val SPEAKER_ON = setOf("شغل المكبر", "فعل المكبر", "افتح المكبر", "مكبر الصوت", "شغل مكبر الصوت", "شغل السماعه", "speaker on", "loudspeaker", "speakerphone")
+        "انهي الاتصال", "ارفض", "ارفض المكالمه", "ارفض الاتصال", "رفض", "ما داير ارد", "ما بدور ارد", "ما برد", "ارفضها",
+        "اقفل الخط دا", "قفل الخط", "قفل المكالمه", "hang up", "end call", "end the call", "reject", "decline")
+    private val SPEAKER_ON = setOf("شغل المكبر", "فعل المكبر", "افتح المكبر", "مكبر الصوت", "شغل مكبر الصوت", "شغل السماعه", "شغل الاسبيكر", "افتح الاسبيكر", "الاسبيكر", "السبيكر", "شغل السبيكر",
+        "السماعه الخارجيه", "كبر الصوت في المكالمه", "speaker on", "loudspeaker", "speakerphone")
     /** Whole sentence only: "وقف" inside "وقف المروحه" must not silence Zol. */
     private val HUSH = setOf("اسكت", "اسكتي", "سكت", "بس", "بس خلاص", "خلاص", "خلاص بس", "كفايه", "وقف الكلام", "بطل كلام", "وقف", "اوقف",
+        "اسكت شويه", "اسكت شوي", "اسكت ياخ", "اسكت يا زول", "خلاص كفايه", "كفايه كلام", "ارح", "اصبر", "اصبر شويه",
         "shut up", "be quiet", "stop talking", "quiet")
     private val SPEAKER_OFF = setOf("طفي المكبر", "اطفي المكبر", "اغلق المكبر", "اقفل المكبر", "قفل المكبر", "speaker off")
 
@@ -253,6 +261,18 @@ object Commands {
 
     /** Fixed phrases, in priority order: the first group that appears in the sentence wins. */
     private val FIXED: List<Pair<List<String>, Cmd>> = listOf(
+        // Sudanese everyday phrasings, checked before the general ones below
+        listOf("الرسايل", "رسايلي", "شنو الرسايل", "في رسايل", "رسايل جديده", "الرسايل الجات", "الرسايل الجديده", "قريني الرسايل",
+            "اقرا الرسايل", "منو اتصل", "مين اتصل", "منو الاتصل", "منو ضرب", "المكالمات الفايته", "فاتتني مكالمه", "في زول اتصل") to Cmd.ReadNotifs,
+        listOf("امسح الكلمه دي", "امسح الكلمه", "امسح اخر كلمه", "شيل الكلمه", "شيل اخر كلمه", "احذف الكلمه") to Cmd.DeleteWord,
+        listOf("صور لي", "شيل صوره", "اشيل صوره", "خد صوره", "اخد صوره", "ارفع صوره", "صورنا") to Cmd.Photo(3),
+        listOf("نقص الصوت", "قلل الصوت شويه", "صغر الصوت", "الصوت عالي") to Cmd.Volume(false),
+        listOf("كبر الصوت", "الصوت واطي", "ما سامع") to Cmd.Volume(true),
+        listOf("الغنيه الجايه", "الاغنيه الجايه", "الغنيه الجاية", "الفيديو الجاي") to Cmd.Media("next"),
+        listOf("الغنيه الفاتت", "الاغنيه الفاتت", "الفيديو الفات") to Cmd.Media("prev"),
+        listOf("شغل الغنا", "شغل الاغاني", "شغل اغنيه", "شغل الموسيقي", "كمل الغنيه", "واصل الغنيه") to Cmd.Media("playpause"),
+        listOf("يوم شنو", "الليله يوم", "نحن في ياتو يوم", "اليوم ياتو يوم", "الشهر كم", "التاريخ الليله") to Cmd.Today,
+        listOf("شنو المكتوب هنا", "شنو هنا", "شنو في الشاشه", "الشاشه فيها شنو", "اقرا المكتوب") to Cmd.ReadScreen,
         listOf("اقرا الاشعارات", "اقرا لي الاشعارات", "شنو الاشعارات", "ايش الاشعارات", "ماذا في الاشعارات", "ما هي الاشعارات",
             "اخر الاشعارات", "read notifications", "my notifications", "read my notifications") to Cmd.ReadNotifs,
         listOf("اخف الارقام", "اخفي الارقام", "شيل الارقام", "hide numbers") to Cmd.Numbers(false),
@@ -293,7 +313,7 @@ object Commands {
         listOf("اقرا المقال", "اقرا كل الشاشه", "اقرا كله", "اقرا الكل", "اقرا النص كامل", "اقرا الصفحه", "اقرا بصوت عالي", "read all", "read the article", "read aloud") to Cmd.ReadLong,
         listOf("اخف الشبكه", "شيل الشبكه", "الغ الشبكه", "اقفل الشبكه", "hide grid") to Cmd.Grid(false),
         listOf("الشبكه", "شبكه", "اظهر الشبكه", "show grid", "grid") to Cmd.Grid(true),
-        listOf("هنا", "اضغط هنا", "دوس هنا", "tap here", "click here") to Cmd.GridHere,
+        listOf("اضغط هنا", "دوس هنا", "اكبس هنا", "tap here", "click here") to Cmd.GridHere,
         listOf("ابلغ المرافق", "ابلغ اهلي", "نبه المرافق", "خبر المرافق", "ارسل للمرافق", "notify caregiver", "tell my caregiver") to Cmd.Caregiver,
         listOf("افتحه", "افتحها", "افتح التطبيق مره ثانيه", "open it", "open it again") to Cmd.OpenApp("به"),
         listOf("اقرا الشاشه", "اقرا لي الشاشه", "اقرا لي", "اقرا", "شنو المكتوب", "المكتوب شنو", "read screen", "read the screen", "read") to Cmd.ReadScreen,
@@ -326,7 +346,7 @@ object Commands {
         "مضاء", "open", "closed", "on", "off", "locked")
     private val WAKE_SOUNDS = setOf("krfs", "krfz", "krbs")
     private val FILLERS = setOf("ممكن", "لو", "سمحت", "من", "فضلك", "يا", "ياخ", "ياخي", "داير", "دايره", "عايز", "عاوز",
-        "اريد", "ابغي", "هسه", "هسي", "يلا", "بالله", "رجاء", "لحظه", "تكرم", "طيب", "عليك", "الله", "زول", "ابي", "بدي", "دايرين", "امش", "امشي", "ودني", "please", "can", "you", "could", "hey")
+        "اريد", "ابغي", "هسه", "هسي", "يلا", "بالله", "رجاء", "لحظه", "تكرم", "طيب", "عليك", "الله", "زول", "ابي", "بدي", "دايرين", "امش", "امشي", "ودني", "وديني", "قوم", "قومي", "اها", "اسمع", "هوي", "يازول", "please", "can", "you", "could", "hey")
     private val APP_WORDS = setOf("تطبيق", "برنامج", "التطبيق", "البرنامج", "app", "application", "the")
 
     /**
@@ -489,6 +509,7 @@ object Commands {
     fun parse(text: String): Cmd? {
         if (isEmergency(text)) return Cmd.Emergency
         teachOf(text)?.let { return it }
+        sudaneseSpecial(text)?.let { return it }
         val cmd = parseCore(text, false) ?: parseCore(text, true) ?: wanted(text)
         return when (cmd) {
             null -> null
@@ -507,6 +528,35 @@ object Commands {
         }
     }
 
+    /**
+     * Sudanese ways of saying things that do not start with a command verb:
+     * "ادي ابوي رنة" (call), "الشحن فاضل كم" (battery), "كتب لي رسالة لعلي قول ليهو…" (message).
+     */
+    private fun sudaneseSpecial(text: String): Cmd? {
+        val w = words(text).dropWhile { normalize(it) in FILLERS }
+        if (w.isEmpty()) return null
+        val t = normalize(w.joinToString(" "))
+        // "ادي ابوي رنة" / "اضرب لي لعمر رنة"
+        if (w.size >= 3 && normalize(w.last()) in setOf("رنه", "رنات", "مسكول", "مسد") &&
+            normalize(w[0]) in setOf("ادي", "اديله", "اضرب", "اعمل", "ارسل", "رسل")) {
+            val who = w.subList(1, w.size - 1).filter { normalize(it) !in setOf("لي", "له", "ل") }
+            if (who.isNotEmpty()) return Cmd.Call(who.joinToString(" "))
+        }
+        // "الشحن فاضل كم", "فضلت كم في الشحن", "البطارية فاضلة قدر شنو"
+        if ((t.contains("شحن") || t.contains("بطاري")) && !t.contains("ولع") && !t.contains("طفي") &&
+            listOf("كم", "فاضل", "فضل", "فضلت", "قدر شنو", "قدر ايه").any { t.contains(it) }) return Cmd.Battery
+        // "كتب لي رسالة لعلي قول ليهو تعال" -> a message, not typing
+        val writer = setOf("اكتب", "كتب", "اكتبلي", "كتبلي")
+        if (normalize(w[0]) in writer) {
+            val rest = w.drop(1).dropWhile { normalize(it) in setOf("لي", "ليك") }
+            if (rest.size >= 2 && normalize(rest[0]) in setOf("رساله", "مسج", "مسيج")) {
+                val again = parseCore("ارسل رساله " + rest.drop(1).joinToString(" "), false)
+                if (again is Cmd.Message || again is Cmd.WhatsApp) return again
+            }
+        }
+        return null
+    }
+
     /** A spoken name that is one of the home devices in settings: "المروحه" -> "المروحه". */
     private fun deviceOf(name: String): String? {
         val n = normalize(name).removePrefix("ال").replace(" ", "")
@@ -519,7 +569,11 @@ object Commands {
         val hadWant = w.takeWhile { normalize(it) in FILLERS }.any { normalize(it) in WANT }
         val rest = w.dropWhile { normalize(it) in FILLERS }
         if (rest.isEmpty() || rest.size > 3) return null
-        val name = trimTail(rest.joinToString(" "))
+        var name = trimTail(rest.joinToString(" "))
+        val n0 = normalize(name)
+        if (hadWant && n0.startsWith("لل")) name = "ال" + n0.removePrefix("لل")
+        else if (hadWant && n0.startsWith("ل") && n0.length > 3 && !n0.startsWith("لا")) name = n0.removePrefix("ل")
+        if (hadWant && normalize(name).startsWith("علي ")) name = normalize(name).removePrefix("علي ")
         val known = appCandidates(name).any { it in APP_ALIASES.values || APP_ALIASES.containsKey(it) }
         return if (hadWant || known) Cmd.OpenApp(name) else null
     }
@@ -548,6 +602,7 @@ object Commands {
         if (t in SPEAKER_ON) return Cmd.Speaker(true)
         if (t in SPEAKER_OFF) return Cmd.Speaker(false)
         if (t in HUSH) return Cmd.Hush
+        if (t == "هنا" || t == "here") return Cmd.GridHere
         modeOf(t)?.let { return Cmd.Mode(it) }
         rest(w, "نفذ لي", "نفذ", "كلفك", "agent", "do this", "carry out")?.let { return Cmd.Agent(it) }
         rest(w, "لخص", "لخصي", "summarize", "summarise")?.let { return Cmd.AskScreen("لخص " + it) }
@@ -610,11 +665,13 @@ object Commands {
         rest(w, "وقف", "اوقف", "ابطل", "stop")?.let { r -> deviceOf(trimTail(r))?.let { return Cmd.Home(it, false) } }
         rest(w, "شغل", "شغل لي", "افتح", "فتح")?.let { r -> deviceOf(trimTail(r))?.let { return Cmd.Home(it, true) } }
 
+        prayerQuestion(t)?.let { return it }
+
         // short fixed phrases (checked before "open X" / "tap X" so that "افتح الاشعارات" works)
         if (w.size <= 6) {
             for ((phrases, cmd) in FIXED) if (phrases.any { " $t ".contains(" $it ") }) return cmd
             alarmOrTimer(t)?.let { return it }
-        } else if (w.size <= 10 && has(t, "ذكرني", "ذكريني", "remind me")) {
+        } else if (w.size <= 12 && has(t, "ذكرني", "ذكريني", "remind me", "صحيني", "نبهني")) {
             alarmOrTimer(t)?.let { return it }
         }
 
@@ -651,9 +708,27 @@ object Commands {
 
     private fun numbersIn(t: String) = t.split(" ").mapNotNull { toNumber(it) }
 
-    /** "منبه الساعة 7 ونص", "صحيني 6 30", "مؤقت 5 دقائق", "timer 10 minutes" */
+    /** "متين المغرب", "الصلاة الجاية", "مواقيت الصلاة", "كم فاضل للعصر" */
+    private fun prayerQuestion(t: String): Cmd? {
+        if (has(t, "ذكرني", "ذكريني", "صحيني", "نبهني", "منبه", "remind", "alarm", "اتصل", "ارسل", "اكتب")) return null
+        if (has(t, "مواقيت الصلاه", "اوقات الصلاه", "مواعيد الصلاه", "اوقات الاذان", "مواقيت اليوم", "prayer times"))
+            return Cmd.PrayerTime("all")
+        val asking = has(t, "متين", "متي", "امتي", "وقت", "موعد", "ميعاد", "كم فاضل", "كم باقي", "فاضل كم", "باقي كم",
+            "بيأذن", "بياذن", "يأذن", "ياذن", "حيأذن", "الاذان", "اذان", "when", "time")
+        val p = PrayerTimes.prayerOf(t)
+        if (p != null && (asking || words(t).size <= 2)) return Cmd.PrayerTime(p.name)
+        if (has(t, "الصلاه الجايه", "الصلاه الجاية", "الصلاه القادمه", "الاذان الجاي", "متين الاذان", "متي الاذان",
+                "الصلاه الياتها", "next prayer")) return Cmd.PrayerTime(null)
+        return null
+    }
+
+    /** "منبه الساعة 7 ونص", "صحيني 6 30", "مؤقت 5 دقائق", "timer 10 minutes", "صحيني سبعة إلا ربع", "ذكرني بعد المغرب" */
     private fun alarmOrTimer(t: String): Cmd? {
         val n = numbersIn(t)
+        val spoken = SpokenTime.clock(t, prayerMinutes?.let { f -> { p: PrayerTimes.Prayer -> f(p) } })
+        if (!has(t, "موقت", "مؤقت", "تايمر", "عداد", "timer")) {
+            SpokenTime.span(t)?.takeIf { it in 1..600 }?.let { return Cmd.Timer(it) }
+        }
         if (has(t, "موقت", "مؤقت", "تايمر", "عداد", "timer")) {
             val minutes = when {
                 has(t, "ساعتين") -> 120
@@ -676,30 +751,34 @@ object Commands {
             }
             if (minutes in 1..600) return Cmd.Timer(minutes)
         }
-        if (n.isEmpty()) return null
+        if (n.isEmpty() && spoken == null) return null
         if (has(t, "ذكرني", "ذكريني", "remind me")) {
-            var hour = n[0]
-            val minute = when {
+            var hour = n.firstOrNull() ?: spoken!!.first
+            var minute = when {
                 n.size > 1 -> n[1]
                 has(t, "ونص", "نص", "half") -> 30
                 has(t, "وربع", "ربع", "quarter") -> 15
                 else -> 0
             }
             if (hour < 12 && has(t, "مساء", "المساء", "العصر", "الليل", "بالليل", "pm")) hour += 12
-            val daily = has(t, "كل يوم", "يوميا", "every day", "daily", "كل صباح", "كل مساء")
-            val stop = setOf("الساعه", "ساعه", "عند", "كل", "at", "في", "يوميا", "daily", "every")
+            spoken?.let { hour = it.first; minute = it.second }
+            val daily = has(t, "كل يوم", "يوميا", "every day", "daily", "كل صباح", "كل مساء", "كل ليله", "كل يوم بعد")
+            val stop = setOf("الساعه", "ساعه", "عند", "كل", "at", "في", "يوميا", "daily", "every", "بعد", "قبل", "مع", "وقت",
+                "بكره", "الصباح", "بالليل", "الليله")
             val label = words(t).drop(if (t.startsWith("remind me")) 2 else 1).dropWhile { it == "to" }.takeWhile { it !in stop && toNumber(it) == null }.joinToString(" ").trim()
-            return if (hour in 0..23 && minute in 0..59) Cmd.Remind(hour, minute, label.ifEmpty { "تذكير" }, daily) else null
+            val what = label.let { if (it.startsWith("بال")) it.removePrefix("ب") else it }
+            return if (hour in 0..23 && minute in 0..59) Cmd.Remind(hour, minute, what.ifEmpty { "تذكير" }, daily) else null
         }
         if (has(t, "منبه", "المنبه", "صحيني", "نبهني", "alarm", "wake me")) {
-            var hour = n[0]
-            val minute = when {
+            var hour = n.firstOrNull() ?: spoken!!.first
+            var minute = when {
                 n.size > 1 -> n[1]
                 has(t, "ونص", "نص", "half") -> 30
                 has(t, "وربع", "ربع", "quarter") -> 15
                 else -> 0
             }
             if (hour < 12 && has(t, "مساء", "المساء", "العصر", "الليل", "بالليل", "pm")) hour += 12
+            spoken?.let { hour = it.first; minute = it.second }
             return if (hour in 0..23 && minute in 0..59) Cmd.Alarm(hour, minute) else null
         }
         return null
@@ -711,7 +790,8 @@ object Commands {
         val k = skeleton(t)
         if (k.length < 4) return null
         for ((phrases, cmd) in FIXED) for (p in phrases) {
-            if (cmd is Cmd.Emergency || cmd is Cmd.StopListening || cmd is Cmd.Send || cmd is Cmd.ClearText || cmd is Cmd.Mute) continue
+            if (cmd is Cmd.Emergency || cmd is Cmd.StopListening || cmd is Cmd.Send || cmd is Cmd.ClearText || cmd is Cmd.Mute ||
+                cmd is Cmd.Train || cmd is Cmd.Bubble || cmd is Cmd.Head) continue
             val pk = skeleton(p)
             if (pk.length >= 4 && pk[0] == k[0] && distance(pk, k) <= 1) return cmd
         }

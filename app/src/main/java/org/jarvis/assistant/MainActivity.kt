@@ -71,6 +71,7 @@ class MainActivity : AppCompatActivity() {
         R.id.scenesBox to "scenes", R.id.secretBox to "secret", R.id.phrasesBox to "phrases", R.id.waCc to "wa_cc",
         R.id.aiUrl to "ai_url", R.id.aiModel to "ai_model", R.id.aiKey to "ai_key",
         R.id.proReminders to "pro_reminders", R.id.proPeople to "pro_people", R.id.proBedtime to "pro_bedtime",
+        R.id.prayerCity to "prayer_city",
     )
 
     /** On/off settings: the switch, its key, and the value when it was never touched. */
@@ -85,8 +86,10 @@ class MainActivity : AppCompatActivity() {
         Triple(R.id.switchProMorning, "pro_morning", true), Triple(R.id.switchProBattery, "pro_battery", true),
         Triple(R.id.switchHeadDwell, "head_dwell_on", true), Triple(R.id.switchHeadBlink, "head_blink", false),
         Triple(R.id.switchHeadInvert, "head_invert", false), Triple(R.id.switchHeadSmile, "head_smile", false),
+        Triple(R.id.switchPrayer, "prayer_alert", false),
     )
 
+    private val befores = listOf(R.id.beforeNow to 0, R.id.before10 to 10, R.id.before15 to 15)
     private val docks = listOf(R.id.dockLeft to "left", R.id.dockRight to "right", R.id.dockOff to "off")
 
     private val headSpeeds = listOf(R.id.headSlow to 0.6f, R.id.headNormal to 1f, R.id.headFast to 1.7f)
@@ -225,6 +228,7 @@ class MainActivity : AppCompatActivity() {
             override fun onDrawerOpened(drawerView: View) {
                 closeDrawerOnBack.isEnabled = true
                 renderDiag()
+                renderPrayer()
             }
 
             override fun onDrawerClosed(drawerView: View) {
@@ -294,6 +298,7 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit().putBoolean(key, checked).apply()
                 if (id == R.id.switchReadNotifs && checked && !notificationAccess()) openNotificationAccess()
                 if (id == R.id.switchBubble) JarvisService.instance?.let { if (checked) it.showBubble() else it.hideBubble() }
+                if (key.startsWith("prayer_")) { ProactiveReceiver.schedulePrayer(this); renderPrayer() }
                 if (key.startsWith("pro_")) {
                     saveSettings()
                     if (id == R.id.switchPro && checked && !exactAlarms()) toast("اسمح بالتذكير الدقيق حتى لا تتأخر التذكيرات")
@@ -361,6 +366,16 @@ class MainActivity : AppCompatActivity() {
         findViewById<MaterialButtonToggleGroup>(R.id.headSpeedGroup).addOnButtonCheckedListener { _, id, isChecked ->
             if (isChecked && !loading) headSpeeds.firstOrNull { it.first == id }?.let { prefs.edit().putFloat("head_speed", it.second).apply() }
         }
+        findViewById<MaterialButtonToggleGroup>(R.id.styleGroup).addOnButtonCheckedListener { _, id, isChecked ->
+            if (isChecked && !loading) prefs.edit().putString("reply_style", if (id == R.id.styleFusha) "fusha" else "sudani").apply()
+        }
+        findViewById<MaterialButtonToggleGroup>(R.id.prayerBeforeGroup).addOnButtonCheckedListener { _, id, isChecked ->
+            if (isChecked && !loading) befores.firstOrNull { it.first == id }?.let {
+                prefs.edit().putInt("prayer_before", it.second).apply()
+                ProactiveReceiver.schedulePrayer(this)
+            }
+        }
+        findViewById<View>(R.id.btnPrayerLocation).setOnClickListener { usePhoneLocation() }
         findViewById<MaterialButtonToggleGroup>(R.id.headDockGroup).addOnButtonCheckedListener { _, id, isChecked ->
             if (isChecked && !loading) docks.firstOrNull { it.first == id }?.let { prefs.edit().putString("head_dock", it.second).apply() }
         }
@@ -389,6 +404,10 @@ class MainActivity : AppCompatActivity() {
         findViewById<MaterialSwitch>(R.id.switchWhisper).isChecked = prefs.getString("engine", "google") == "whisper"
         findViewById<MaterialButtonToggleGroup>(R.id.langGroup)
             .check(if (prefs.getString("lang", "ar-SA") == "ar-SA") R.id.btnAr else R.id.btnEn)
+        findViewById<MaterialButtonToggleGroup>(R.id.styleGroup)
+            .check(if (prefs.getString("reply_style", "sudani") == "fusha") R.id.styleFusha else R.id.styleSudani)
+        findViewById<MaterialButtonToggleGroup>(R.id.prayerBeforeGroup)
+            .check(befores.firstOrNull { it.second == prefs.getInt("prayer_before", 0) }?.first ?: R.id.beforeNow)
         findViewById<MaterialButtonToggleGroup>(R.id.headDockGroup)
             .check(docks.firstOrNull { it.second == prefs.getString("head_dock", "left") }?.first ?: R.id.dockLeft)
         val wake = prefs.getString("wake_word", "زول").orEmpty()
@@ -404,9 +423,13 @@ class MainActivity : AppCompatActivity() {
         findViewById<MaterialButtonToggleGroup>(R.id.headDwellGroup).check(headDwells.minBy { kotlin.math.abs(it.second - dwell) }.first)
         loading = false
         renderHeadButton()
+        renderPrayer()
     }
 
     private fun saveSettings() {
+        val typedCity = findViewById<EditText>(R.id.prayerCity).text.toString().trim()
+        if (typedCity != prefs.getString("prayer_city", "") && typedCity != "موقعك")
+            prefs.edit().remove("prayer_lat").remove("prayer_lon").apply()
         val edit = prefs.edit()
         for ((id, key) in textSettings) edit.putString(key, findViewById<EditText>(id).text.toString().trim())
         edit.apply()
@@ -424,6 +447,44 @@ class MainActivity : AppCompatActivity() {
         Commands.setWake(clean)
         findViewById<TextView>(R.id.wakeNote).visibility = if (Commands.wakeWord == "زول") View.VISIBLE else View.GONE
         if (!loading) refresh()
+    }
+
+    // ---- prayer times
+
+    /** Today's times for the chosen place, shown at the top of the prayer section. */
+    private fun renderPrayer() {
+        val place = ProactiveReceiver.prayerPlace(this)
+        val typed = prefs.getString("prayer_city", "").orEmpty()
+        val known = typed.isEmpty() || typed == "موقعك" || PrayerTimes.city(typed) != null || !prefs.getFloat("prayer_lat", Float.NaN).isNaN()
+        val times = PrayerTimes.forDay(java.util.Calendar.getInstance(), place.lat, place.lon)
+        val line = PrayerTimes.FIVE.joinToString("  •  ") { p ->
+            val m = times.getValue(p); "${p.ar} " + String.format(java.util.Locale.US, "%d:%02d", m / 60, m % 60)
+        }
+        findViewById<TextView>(R.id.prayerToday).text =
+            (if (known) "" else "ما لقيت «$typed»، فاستعملت الخرطوم. ") + "${place.name} الليلة:\n$line"
+    }
+
+    /** The phone's last known place, so prayer times fit where the person actually is. */
+    @SuppressLint("MissingPermission")
+    private fun usePhoneLocation() {
+        if (!granted(Manifest.permission.ACCESS_COARSE_LOCATION) && !granted(Manifest.permission.ACCESS_FINE_LOCATION)) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION), REQ_LOCATION)
+            return
+        }
+        val lm = getSystemService(LOCATION_SERVICE) as android.location.LocationManager
+        val loc = listOf(android.location.LocationManager.NETWORK_PROVIDER, android.location.LocationManager.GPS_PROVIDER,
+            android.location.LocationManager.PASSIVE_PROVIDER)
+            .mapNotNull { runCatching { lm.getLastKnownLocation(it) }.getOrNull() }
+            .maxByOrNull { it.time }
+        if (loc == null) { toast("ما لقيت موقعك. شغّل الموقع (GPS) لحظة وجرّب تاني، أو اكتب اسم المدينة."); return }
+        prefs.edit().putFloat("prayer_lat", loc.latitude.toFloat()).putFloat("prayer_lon", loc.longitude.toFloat())
+            .putString("prayer_city", "موقعك").apply()
+        loading = true
+        findViewById<EditText>(R.id.prayerCity).setText("موقعك")
+        loading = false
+        ProactiveReceiver.schedulePrayer(this)
+        renderPrayer()
+        toast("تمام، أوقات الصلاة حسب موقعك")
     }
 
     // ---- proactive assistant and head pointer
@@ -470,6 +531,7 @@ class MainActivity : AppCompatActivity() {
     @Deprecated("Deprecated in Java")
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_LOCATION && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) usePhoneLocation()
         if (requestCode == REQ_CAMERA) {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) toggleHead()
             else toast("بدون إذن الكاميرا لا يعمل التحكم بالرأس")
@@ -661,6 +723,9 @@ class MainActivity : AppCompatActivity() {
         "التحكم بالرأس" to listOf("شغّل التحكم بالرأس ← حرّك رأسك وثبّت الدائرة لتضغط",
             "ثبّت على ▲ ▼ في الشريط للتمرير، وعلى ↩ للرجوع", "اضغط هنا • اضغط مطوّل هنا • وسّط المؤشر",
             "وقّف الضغط • شغّل الضغط  (المؤشر يتحرك دون ضغط)", "وقّف التحكم بالرأس"),
+        "الصلاة" to listOf("متين المغرب؟ • كم فاضل للعصر", "الصلاة الجاية • مواقيت الصلاة"),
+        "الوقت بالسوداني" to listOf("صحيني سبعة إلا ربع • صحيني ستة وتلت الصباح", "ذكرني بالدوا كل يوم بعد العشا",
+            "نبهني بعد تلت ساعة • بعد ساعة ونص"),
         "التذكير والمبادرة" to listOf("ذكرني بالدواء كل يوم الساعة 8 مساء ← يسألك: هل فعلتها؟", "شنو تذكيراتي • امسح تذكير الدواء"),
         "تعليم زول لهجتك" to listOf("دربني ← يقول لك أمراً فتقوله بطريقتك", "لما أقول جيب الواتس يعني افتح الواتساب",
             "اسكت • خلاص  (يوقف الكلام)", "سكّت الصوت • رجّع الصوت"),
@@ -845,7 +910,8 @@ class MainActivity : AppCompatActivity() {
         "emergency_number", "ntfy_topic", "tones", "read_notifs", "home_alerts", "eco_low", "eco_screen", "secret_on",
         "secret", "mode", "bubble", "ai_url", "ai_model", "ai_screen", "agent_on", "memory", "aliases",
         "pro_on", "pro_reminders", "pro_people", "pro_care", "pro_morning", "pro_battery", "pro_bedtime",
-        "head_speed", "head_dwell", "head_dwell_on", "head_blink", "head_invert", "head_smile", "head_dock", "wake_word")
+        "head_speed", "head_dwell", "head_dwell_on", "head_blink", "head_invert", "head_smile", "head_dock", "wake_word",
+        "reply_style", "prayer_alert", "prayer_before", "prayer_city", "prayer_lat", "prayer_lon")
 
     private val exportSettingsFile = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) {
@@ -872,7 +938,8 @@ class MainActivity : AppCompatActivity() {
                         is Boolean -> edit.putBoolean(key, value)
                         is String -> edit.putString(key, value)
                         is Number -> when (key) {
-                            "head_speed" -> edit.putFloat(key, value.toFloat())
+                            "head_speed", "prayer_lat", "prayer_lon" -> edit.putFloat(key, value.toFloat())
+                            "prayer_before" -> edit.putInt(key, value.toInt())
                             "head_dwell" -> edit.putLong(key, value.toLong())
                             else -> continue
                         }
@@ -1079,7 +1146,7 @@ class MainActivity : AppCompatActivity() {
         val items = listOf(
             "الرئيسية" to "الرئيسية", "رجوع" to "ارجع", "الأرقام" to "الارقام", "انزل" to "انزل",
             "اطلع" to "اطلع", "الإشعارات" to "الاشعارات", "الكشاف" to "ولع الكشاف", "اقرأ الشاشة" to "اقرا الشاشة",
-            "تذكيراتي" to "تذكيراتي",
+            "تذكيراتي" to "تذكيراتي", "الصلاة الجاية" to "الصلاة الجاية",
         )
         for ((label, command) in items) {
             val chip = TextView(this)
@@ -1132,6 +1199,7 @@ class MainActivity : AppCompatActivity() {
 
     private companion object {
         const val REQ_CAMERA = 77
+        const val REQ_LOCATION = 78
     }
 }
 

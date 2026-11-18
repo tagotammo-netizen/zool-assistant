@@ -84,6 +84,43 @@ class ProactiveReceiver : BroadcastReceiver() {
         const val EXTRA_ATTEMPT = "attempt"
         private const val CODE_NEXT = 7001
         private const val CODE_AGAIN = 7002
+        private const val CODE_PRAYER = 7003
+
+        /** Where prayer times are worked out: the city chosen in settings, the phone's saved location, or Khartoum. */
+        fun prayerPlace(context: Context): PrayerTimes.City {
+            val prefs = context.getSharedPreferences("jarvis", Context.MODE_PRIVATE)
+            val lat = prefs.getFloat("prayer_lat", Float.NaN)
+            val lon = prefs.getFloat("prayer_lon", Float.NaN)
+            val name = prefs.getString("prayer_city", "").orEmpty()
+            if (!lat.isNaN() && !lon.isNaN()) return PrayerTimes.City(name.ifEmpty { "موقعك" }, lat.toDouble(), lon.toDouble())
+            return PrayerTimes.city(name) ?: PrayerTimes.CITIES.first()
+        }
+
+        /** Set the alarm for the next adhan (or a few minutes before it), when prayer alerts are on. */
+        fun schedulePrayer(context: Context) {
+            val prefs = context.getSharedPreferences("jarvis", Context.MODE_PRIVATE)
+            val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            am.cancel(intent(context, "prayer", "", 1, CODE_PRAYER))
+            if (!prefs.getBoolean("prayer_alert", false)) return
+            val before = prefs.getInt("prayer_before", 0)
+            val place = prayerPlace(context)
+            val now = Calendar.getInstance()
+            for (day in 0..1) {
+                val cal = (now.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, day) }
+                val times = PrayerTimes.forDay(cal, place.lat, place.lon)
+                for (p in PrayerTimes.FIVE) {
+                    val m = times.getValue(p) - before
+                    val at = (cal.clone() as Calendar).apply {
+                        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+                        add(Calendar.MINUTE, m)
+                    }.timeInMillis
+                    if (at > now.timeInMillis + 30_000) {
+                        setAlarm(context, at, intent(context, "prayer", p.name, before, CODE_PRAYER))
+                        return
+                    }
+                }
+            }
+        }
 
         private fun intent(context: Context, kind: String, text: String, attempt: Int, code: Int): PendingIntent =
             PendingIntent.getBroadcast(context, code,
@@ -105,6 +142,7 @@ class ProactiveReceiver : BroadcastReceiver() {
 
         /** Set the alarm for the earliest coming reminder or bedtime. Call after any change and after each firing. */
         fun schedule(context: Context) {
+            schedulePrayer(context)
             val prefs = context.getSharedPreferences("jarvis", Context.MODE_PRIVATE)
             val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
             val pi0 = intent(context, "", "", 1, CODE_NEXT)

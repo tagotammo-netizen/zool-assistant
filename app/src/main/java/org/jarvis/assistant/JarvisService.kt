@@ -151,7 +151,14 @@ class JarvisService : AccessibilityService() {
 
     private val prefs get() = getSharedPreferences("jarvis", MODE_PRIVATE)
 
-    private fun t(ar: String, en: String) = if (arabic) ar else en
+    /** Reply in the person's language; Arabic replies in Sudanese unless they chose standard Arabic. */
+    private fun t(ar: String, en: String) = if (!arabic) en else if (sudani()) Sudani.convert(ar) else ar
+
+    private fun sudani() = prefs.getString("reply_style", "sudani") != "fusha"
+
+    /** "سبعة وربع الصباح" in Sudanese style, "7:15" otherwise. */
+    private fun clockText(h: Int, m: Int) =
+        if (arabic && sudani()) SpokenTime.say(h, m) else String.format(Locale.US, "%d:%02d", h, m)
 
     private fun granted(permission: String) =
         ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
@@ -170,6 +177,7 @@ class JarvisService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         Commands.setWake(prefs.getString("wake_word", "زول"))
+        usePrayerPlace()
         initVoice()
         log("الخدمة تعمل.")
         ProactiveReceiver.schedule(this)
@@ -684,7 +692,7 @@ class JarvisService : AccessibilityService() {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         if (c.daily) intent.putExtra(AlarmClock.EXTRA_DAYS, arrayListOf(
             Calendar.SUNDAY, Calendar.MONDAY, Calendar.TUESDAY, Calendar.WEDNESDAY, Calendar.THURSDAY, Calendar.FRIDAY, Calendar.SATURDAY))
-        val at = String.format(Locale.US, "%d:%02d", c.hour, c.minute)
+        val at = clockText(c.hour, c.minute)
         try {
             startActivity(intent)
         } catch (e: Exception) {
@@ -1323,6 +1331,7 @@ class JarvisService : AccessibilityService() {
         Commands.userPhrases = Commands.parsePhrases(prefs.getString("phrases", "").orEmpty())
         Commands.homeDevices = devices().keys
         Commands.setWake(prefs.getString("wake_word", "زول"))
+        usePrayerPlace()
         if (text.isNotBlank()) prefs.edit().putBoolean("tested", true).apply()
         if (trainQueue != null && text.isNotBlank()) {
             if (Commands.isEmergency(text)) trainQueue = null else { trainHeard(listOf(text)); return }
@@ -1460,7 +1469,7 @@ class JarvisService : AccessibilityService() {
         ProactiveReceiver.schedule(this)
     }
 
-    private fun clock(h: Int, m: Int) = String.format(Locale.US, "%d:%02d", h, m)
+    private fun clock(h: Int, m: Int) = clockText(h, m)
 
     private fun addReminder(c: Cmd.Remind): String {
         val list = reminders().filterNot { it.hour == c.hour && it.minute == c.minute && Commands.normalize(it.text) == Commands.normalize(c.text) }
@@ -1488,6 +1497,7 @@ class JarvisService : AccessibilityService() {
     fun proactiveFire(kind: String, text: String, attempt: Int) {
         main.post {
             if (kind != "again") ProactiveReceiver.schedule(this)          // the plan moves on to the next one
+            if (kind == "prayer") { prayerAlert(text, attempt); return@post }
             if (!prefs.getBoolean("pro_on", false)) return@post
             when (kind) {
                 "bedtime" -> {
@@ -1511,8 +1521,8 @@ class JarvisService : AccessibilityService() {
             return
         }
         ProactiveReceiver.again(this, text, attempt + 1, 12)
-        val question = if (attempt == 1) t("تذكير: $text. هل فعلتها؟ قل نعم أو لا.", "Reminder: $text. Done? Say yes or no.")
-            else t("أذكّرك مرة أخرى: $text. هل فعلتها؟", "Reminder again: $text. Done?")
+        val question = if (attempt == 1) t("تذكير: «$text». هل فعلتها؟ قل نعم أو لا.", "Reminder: $text. Done? Say yes or no.")
+            else t("أذكّرك مرة أخرى: «$text». هل فعلتها؟", "Reminder again: $text. Done?")
         ask(question, seconds = 120, onNo = {
             ProactiveReceiver.again(this, text, attempt + 1, 10)
             if (attempt >= 3 && prefs.getBoolean("pro_care", false)) t("حسناً. إن لم تؤكد خلال 10 دقائق سأبلغ المرافق.", "OK.")
@@ -1562,6 +1572,61 @@ class JarvisService : AccessibilityService() {
         val plan = if (list.isEmpty()) "" else " " + t("تذكيرات اليوم: ", "Today: ") + list.joinToString("، ") { "${it.text} ${clock(it.hour, it.minute)}" } + "."
         announce(t("صباح الخير!", "Good morning!") + plan, false)
         main.postDelayed({ if (listening) runAll(Commands.parseAll("صباح الخير"), 0) }, 4000)
+    }
+
+    // ------------------------------------------------------------------ prayer times
+
+    /** Let the parser turn "بعد المغرب" into a clock time at the person's place. */
+    private fun usePrayerPlace() {
+        val place = ProactiveReceiver.prayerPlace(this)
+        Commands.prayerMinutes = { p -> PrayerTimes.forDay(java.util.Calendar.getInstance(), place.lat, place.lon)[p] }
+    }
+
+    private fun prayerName(p: PrayerTimes.Prayer) = t(p.ar, p.en)
+
+    private fun clockOfDay(minutes: Int) = clockText(minutes / 60, minutes % 60)
+
+    /** "ساعة و20 دقيقة", "40 دقيقة", "ساعتين" */
+    private fun spanText(minutes: Int): String {
+        val h = minutes / 60
+        val m = minutes % 60
+        if (!arabic) return listOfNotNull(if (h > 0) "$h h" else null, if (m > 0) "$m min" else null).joinToString(" ").ifEmpty { "now" }
+        val hours = when (h) { 0 -> ""; 1 -> "ساعة"; 2 -> "ساعتين"; else -> "$h ساعات" }
+        val mins = when (m) { 0 -> ""; 1 -> "دقيقة"; 2 -> "دقيقتين"; in 3..10 -> "$m دقايق"; else -> "$m دقيقة" }
+        return listOf(hours, mins).filter { it.isNotEmpty() }.joinToString(" و").ifEmpty { "دقيقة" }
+    }
+
+    /** prayer: null = the next one, "all" = today's list, or a [PrayerTimes.Prayer] name. */
+    private fun prayerAnswer(prayer: String?): String {
+        val place = ProactiveReceiver.prayerPlace(this)
+        val now = java.util.Calendar.getInstance()
+        val nowMin = now.get(java.util.Calendar.HOUR_OF_DAY) * 60 + now.get(java.util.Calendar.MINUTE)
+        val today = PrayerTimes.forDay(now, place.lat, place.lon)
+        if (prayer == "all") {
+            val list = PrayerTimes.FIVE.joinToString("، ") { "${prayerName(it)} ${clockOfDay(today.getValue(it))}" }
+            return t("مواقيت الصلاة الليلة في ${place.name}: $list.", "Prayer times today in ${place.name}: $list.")
+        }
+        val p = prayer?.let { runCatching { PrayerTimes.Prayer.valueOf(it) }.getOrNull() }
+        if (p == null) {
+            val (next, at, tomorrow) = PrayerTimes.next(now, place.lat, place.lon)
+            val left = (if (tomorrow) at + 24 * 60 else at) - nowMin
+            return t("الصلاة الجاية ${prayerName(next)} الساعة ${clockOfDay(at)}، فاضل ليها ${spanText(left)}.",
+                "Next is ${prayerName(next)} at ${clockOfDay(at)}, in ${spanText(left)}.")
+        }
+        val at = today.getValue(p)
+        return if (at > nowMin) t("${prayerName(p)} الساعة ${clockOfDay(at)}، فاضل ${spanText(at - nowMin)}.",
+            "${prayerName(p)} is at ${clockOfDay(at)}, in ${spanText(at - nowMin)}.")
+        else t("${prayerName(p)} أذّن الليلة الساعة ${clockOfDay(at)}، قبل ${spanText(nowMin - at)}.",
+            "${prayerName(p)} was at ${clockOfDay(at)} today, ${spanText(nowMin - at)} ago.")
+    }
+
+    /** The adhan alarm fired: [name] is the prayer, [before] how many minutes early it was set. */
+    private fun prayerAlert(name: String, before: Int) {
+        val p = runCatching { PrayerTimes.Prayer.valueOf(name) }.getOrNull() ?: return
+        val text = if (before > 0) t("فاضل ${spanText(before)} على أذان ${prayerName(p)}.", "${prayerName(p)} in ${spanText(before)}.")
+            else t("حان وقت صلاة ${prayerName(p)}.", "It is time for ${prayerName(p)}.")
+        beep(2)
+        announce(text, false, urgent = true)
     }
 
     // ------------------------------------------------------------------ dialect training ("دربني")
@@ -1715,7 +1780,7 @@ class JarvisService : AccessibilityService() {
         when {
             guess != null -> {
                 beep(1)
-                respond(ask(t("تقصد: ${guess.first}؟ نعم أو لا.", "Do you mean: ${guess.first}? Yes or no.")) { execute(guess.second) })
+                respond(ask(t("تقصد: «${guess.first}»؟ نعم أو لا.", "Do you mean: ${guess.first}? Yes or no.")) { execute(guess.second) })
             }
             localAiReady() -> askLocal(text)
             else -> { beep(3); respond(t("لم أفهم. قل: مساعدة.", "I did not understand. Say: help.")) }
@@ -1858,7 +1923,7 @@ class JarvisService : AccessibilityService() {
             is Cmd.Swipe -> { swipeSide(c.toRight); ok }
             is Cmd.Flashlight -> flashlight(c.on)
             is Cmd.Alarm -> {
-                val at = String.format(Locale.US, "%d:%02d", c.hour, c.minute)
+                val at = clockText(c.hour, c.minute)
                 fun alarm(skipUi: Boolean) = startActivity(Intent(AlarmClock.ACTION_SET_ALARM)
                     .putExtra(AlarmClock.EXTRA_HOUR, c.hour)
                     .putExtra(AlarmClock.EXTRA_MINUTES, c.minute)
@@ -1948,9 +2013,11 @@ class JarvisService : AccessibilityService() {
                 ok
             }
             Cmd.Time -> {
-                val now = SimpleDateFormat("HH:mm", Locale.US).format(Date())
+                val cal = java.util.Calendar.getInstance()
+                val now = clockText(cal.get(java.util.Calendar.HOUR_OF_DAY), cal.get(java.util.Calendar.MINUTE))
                 t("الساعة $now", "It is $now")
             }
+            is Cmd.PrayerTime -> prayerAnswer(c.prayer)
             Cmd.Emergency -> emergency()
             Cmd.Train -> startDialectTraining()
             is Cmd.Head -> if (c.on) startHead() else stopHead()
@@ -2483,7 +2550,7 @@ class JarvisService : AccessibilityService() {
         lastContact = contact.first
         if (body.isBlank()) return t("قل الرسالة كاملة، مثلاً: ارسل لأحمد واتساب تقول أنا في الطريق.",
             "Say the whole message, for example: whatsapp Ali saying I am on my way.")
-        return ask(t("أرسل واتساب إلى ${contact.first}: $body. نعم أو لا؟", "WhatsApp to ${contact.first}: $body. Yes or no?")) {
+        return ask(t("أرسل واتساب إلى ${contact.first}: «$body». نعم أو لا؟", "WhatsApp to ${contact.first}: $body. Yes or no?")) {
             val uri = Uri.parse("https://wa.me/${waNumber(contact.second)}?text=${Uri.encode(body)}")
             startActivity(Intent(Intent.ACTION_VIEW, uri).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             pressSendSoon(3)
@@ -2509,7 +2576,7 @@ class JarvisService : AccessibilityService() {
         val input = replyInput
         if (action != null && input != null && SystemClock.elapsedRealtime() - replyAt < 90_000) {
             val from = replyFrom
-            return ask(t("أرد على $from بـ: $body. نعم أو لا؟", "Reply to $from: $body. Yes or no?")) {
+            return ask(t("أرد على $from بـ: «$body». نعم أو لا؟", "Reply to $from: $body. Yes or no?")) {
                 try {
                     val intent = Intent()
                     RemoteInput.addResultsToIntent(arrayOf(input), intent, Bundle().apply { putCharSequence(input.resultKey, body) })
@@ -2524,7 +2591,7 @@ class JarvisService : AccessibilityService() {
         val field = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
             ?: screenNodes().firstOrNull { it.isEditable && it.isVisibleToUser }
             ?: return t("افتح المحادثة أولاً.", "Open the chat first.")
-        return ask(t("أرد بـ: $body. نعم أو لا؟", "Reply: $body. Yes or no?")) {
+        return ask(t("أرد بـ: «$body». نعم أو لا؟", "Reply: $body. Yes or no?")) {
             val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, body) }
             field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
             pressSendSoon(3, 900)
@@ -2542,7 +2609,7 @@ class JarvisService : AccessibilityService() {
             .mapNotNull { it.text?.toString()?.trim() }
             .filter { it.isNotEmpty() }
         if (texts.isEmpty()) return t("لم أجد رسائل. افتح المحادثة أولاً.", "I found no messages. Open the chat first.")
-        return t("آخر رسالة: ${texts.last()}", "Last message: ${texts.last()}")
+        return t("آخر رسالة: «${texts.last()}»", "Last message: ${texts.last()}")
     }
 
     /** Where am I, and what can I press here. Everything comes from the screen itself, so it works offline. */
@@ -2589,7 +2656,7 @@ class JarvisService : AccessibilityService() {
                 }, 500)
             }
         }, 700)
-        return t("أبحث عن $query.", "Searching for $query.")
+        return t("أبحث عن «$query».", "Searching for $query.")
     }
 
     // ------------------------------------------------------------------ offline speech pack
@@ -2649,7 +2716,7 @@ class JarvisService : AccessibilityService() {
         if (body.isBlank()) return t("قل الرسالة كاملة، مثلاً: أرسل رسالة لأحمد تقول أنا في الطريق.",
             "Say the whole message, for example: send a message to Ali saying I am on my way.")
         // never send without a clear yes: speech recognition can pick the wrong person
-        return ask(t("أرسل إلى ${contact.first}: $body. نعم أو لا؟", "Send to ${contact.first}: $body. Yes or no?")) {
+        return ask(t("أرسل إلى ${contact.first}: «$body». نعم أو لا؟", "Send to ${contact.first}: $body. Yes or no?")) {
             @Suppress("DEPRECATION")
             val sms = if (Build.VERSION.SDK_INT >= 31) getSystemService(SmsManager::class.java) else SmsManager.getDefault()
             sms.sendMultipartTextMessage(contact.second, null, sms.divideMessage(body), null, null)

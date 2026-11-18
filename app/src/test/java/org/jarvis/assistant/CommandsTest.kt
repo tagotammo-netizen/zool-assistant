@@ -84,8 +84,8 @@ class CommandsTest {
         assertEquals(Cmd.OpenApp("به"), one("افتحه"))
         assertEquals(Cmd.HomeStatus("المروحة"), one("حالة المروحة"))
         assertEquals(Cmd.HomeStatus("الباب"), one("هل الباب مفتوح"))
-        assertEquals(Cmd.Remind(20, 0, "بالدواء", true), one("ذكرني بالدواء كل يوم الساعة 8 مساء"))
-        assertEquals(Cmd.Remind(9, 0, "بالدواء", false), one("ذكرني بالدواء الساعة 9"))
+        assertEquals(Cmd.Remind(20, 0, "الدواء", true), one("ذكرني بالدواء كل يوم الساعة 8 مساء"))
+        assertEquals(Cmd.Remind(9, 0, "الدواء", false), one("ذكرني بالدواء الساعة 9"))
         assertEquals(Cmd.Timer(10), one("نبهني بعد 10 دقائق"))
         assertEquals(Cmd.Alarm(7, 0), one("نبهني الساعة 7"))
     }

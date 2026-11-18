@@ -118,7 +118,7 @@ class HeadAndProactiveTest {
         assertEquals(Cmd.GridHere, Commands.parse("اضغط هنا"))
         assertEquals(Cmd.ListReminders, Commands.parse("شنو تذكيراتي"))
         assertEquals(Cmd.DeleteReminder("الدواء"), Commands.parse("امسح تذكير الدواء"))
-        assertEquals(Cmd.Remind(20, 0, "بالدواء", true), Commands.parse("ذكرني بالدواء كل يوم الساعة 8 مساء"))
+        assertEquals(Cmd.Remind(20, 0, "الدواء", true), Commands.parse("ذكرني بالدواء كل يوم الساعة 8 مساء"))
     }
 
     // ---- head pointer: scrolling dock, smile, finer control
