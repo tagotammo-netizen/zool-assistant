@@ -98,6 +98,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        prefs.getString("last_crash", null)?.let { showCrash(it); return }
         enableEdgeToEdge(SystemBarStyle.dark(Color.TRANSPARENT), SystemBarStyle.dark(Color.TRANSPARENT))
         setContentView(R.layout.activity_main)
         drawer = findViewById(R.id.drawer)
@@ -158,6 +159,48 @@ class MainActivity : AppCompatActivity() {
             if (actionId == EditorInfo.IME_ACTION_SEND) { send(); true } else false
         }
         askPermissions()
+    }
+
+    /**
+     * The app stopped last time: show what went wrong, built in code so it works even when the crash was in the
+     * main layout. The person can copy it to send to the developer, then open the app normally.
+     */
+    private fun showCrash(text: String) {
+        val pad = dp(20)
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad * 2, pad, pad) }
+        box.addView(TextView(this).apply {
+            this.text = "توقف ${Brand.NAME} في المرة السابقة بسبب خطأ"
+            textSize = 20f
+            setTextColor(Color.WHITE)
+        })
+        box.addView(TextView(this).apply {
+            this.text = "انسخ الخطأ وأرسله للمطوّر حتى يصلحه، ثم اضغط «تشغيل التطبيق»."
+            textSize = 14f
+            setTextColor(0xFFB0BEC5.toInt())
+            setPadding(0, dp(8), 0, dp(12))
+        })
+        fun button(label: String, action: () -> Unit) = android.widget.Button(this).apply {
+            this.text = label
+            setOnClickListener { action() }
+        }
+        box.addView(button("نسخ الخطأ") {
+            (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager)
+                .setPrimaryClip(android.content.ClipData.newPlainText("crash", text))
+            toast("نُسخ الخطأ")
+        })
+        box.addView(button("تشغيل التطبيق") {
+            prefs.edit().remove("last_crash").commit()
+            recreate()
+        })
+        box.addView(TextView(this).apply {
+            this.text = text
+            textSize = 11f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextColor(0xFFE6EDF7.toInt())
+            setTextIsSelectable(true)
+            setPadding(0, dp(12), 0, 0)
+        })
+        setContentView(ScrollView(this).apply { setBackgroundColor(0xFF0A1426.toInt()); addView(box) })
     }
 
     // ---- settings drawer
@@ -328,7 +371,7 @@ class MainActivity : AppCompatActivity() {
             when (id) {
                 R.id.wakeZol -> setWake("زول")
                 R.id.wakeJohnny -> setWake("جوني")
-                else -> findViewById<EditText>(R.id.wakeCustom).requestFocus()
+                else -> findViewById<EditText>(R.id.wakeCustomText).requestFocus()
             }
         }
         findViewById<MaterialButtonToggleGroup>(R.id.headDwellGroup).addOnButtonCheckedListener { _, id, isChecked ->
@@ -353,7 +396,7 @@ class MainActivity : AppCompatActivity() {
         val wakeId = when (Commands.wakeWord) { "زول" -> R.id.wakeZol; "جوني" -> R.id.wakeJohnny; else -> R.id.wakeCustom }
         findViewById<MaterialButtonToggleGroup>(R.id.wakeGroup).check(wakeId)
         findViewById<View>(R.id.wakeCustomBox).visibility = if (wakeId == R.id.wakeCustom) View.VISIBLE else View.GONE
-        findViewById<EditText>(R.id.wakeCustom).setText(if (wakeId == R.id.wakeCustom) wake else "")
+        findViewById<EditText>(R.id.wakeCustomText).setText(if (wakeId == R.id.wakeCustom) wake else "")
         findViewById<View>(R.id.wakeNote).visibility = if (Commands.wakeWord == "زول") View.VISIBLE else View.GONE
         val speed = prefs.getFloat("head_speed", 1f)
         findViewById<MaterialButtonToggleGroup>(R.id.headSpeedGroup).check(headSpeeds.minBy { kotlin.math.abs(it.second - speed) }.first)
@@ -368,7 +411,7 @@ class MainActivity : AppCompatActivity() {
         for ((id, key) in textSettings) edit.putString(key, findViewById<EditText>(id).text.toString().trim())
         edit.apply()
         if (findViewById<MaterialButtonToggleGroup>(R.id.wakeGroup).checkedButtonId == R.id.wakeCustom) {
-            val word = findViewById<EditText>(R.id.wakeCustom).text.toString().trim()
+            val word = findViewById<EditText>(R.id.wakeCustomText).text.toString().trim()
             if (word.isNotEmpty()) setWake(word)
         }
         ProactiveReceiver.schedule(this)

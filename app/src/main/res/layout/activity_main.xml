@@ -607,7 +607,7 @@
                         android:visibility="gone">
 
                         <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/wakeCustom"
+                            android:id="@+id/wakeCustomText"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:importantForAutofill="no"
