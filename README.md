@@ -1,4 +1,4 @@
-# جوني — Johnny
+# زول — Zol
 
 **مساعد صوتي مفتوح المصدر يعمل بالعربية (بما فيها اللهجة السودانية) والإنجليزية، لمن لا يستطيع استخدام يديه.**
 **An open-source voice assistant for Arabic (including Sudanese dialect) and English, built for people who cannot use their hands.**
@@ -11,7 +11,7 @@ Phone and PC, no subscriptions, most features work offline.
 
 ## ماذا يفعل | What it does
 
-- يستمع دائماً ويستيقظ بكلمة **«جوني»** ثم ينفذ الأمر: فتح التطبيقات، الاتصال، الرسائل والواتساب، التمرير، الضغط على الأزرار بالرقم أو بالشبكة.
+- يستمع دائماً ويستيقظ بكلمة **«زول»** ثم ينفذ الأمر: فتح التطبيقات، الاتصال، الرسائل والواتساب، التمرير، الضغط على الأزرار بالرقم أو بالشبكة.
 - قراءة الشاشة والمقالات والإشعارات بصوت عالٍ، والرد على الرسائل بالصوت.
 - الرد على المكالمات وإنهاؤها، الإملاء مع علامات الترقيم، التذكير بالدواء.
 - التحكم بالبيت الذكي عبر ESP32 (تشغيل، حالة الجهاز، تنبيهات صوتية).
@@ -22,10 +22,10 @@ Phone and PC, no subscriptions, most features work offline.
 ## التثبيت | Install
 
 1. افتح مجلد `jarvis-android` في Android Studio، اضغط **Sync** ثم **Run ▶** على هاتفك.
-2. افتح التطبيق واتبع البطاقة الأولى: الأذونات، تفعيل خدمة **جوني** في إمكانية الوصول، استثناء البطارية.
-3. قل: «جوني افتح الواتساب».
+2. افتح التطبيق واتبع البطاقة الأولى: الأذونات، تفعيل خدمة **زول** في إمكانية الوصول، استثناء البطارية.
+3. قل: «زول افتح الواتساب».
 
-Open `jarvis-android` in Android Studio, Sync, Run. Follow the setup card, then say: "Johnny, open WhatsApp".
+Open `jarvis-android` in Android Studio, Sync, Run. Follow the setup card, then say: "Zol, open WhatsApp".
 
 المتطلبات: أندرويد 8+ (المكالمات تحتاج 9+ لإنهائها).
 

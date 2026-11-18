@@ -30,7 +30,7 @@ class JarvisTile : TileService() {
         val tile = qsTile ?: return
         val on = JarvisService.instance?.listening == true
         tile.state = if (on) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-        tile.label = "جوني"
+        tile.label = Brand.NAME
         if (Build.VERSION.SDK_INT >= 29) tile.subtitle = if (on) "يستمع" else "متوقف"
         tile.updateTile()
     }

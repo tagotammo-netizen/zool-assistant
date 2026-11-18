@@ -68,8 +68,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * The heart of Johnny on the phone. As an accessibility service it keeps running over every app,
- * listens for "جوني ..." and controls the screen without touch.
+ * The heart of Zol on the phone. As an accessibility service it keeps running over every app,
+ * listens for "زول ..." (or the chosen wake word) and controls the screen without touch.
  */
 class JarvisService : AccessibilityService() {
 
@@ -85,7 +85,7 @@ class JarvisService : AccessibilityService() {
 
         /** Instructions for the optional language model: turn messy speech into one of our commands. */
         private val AI_PROMPT = """
-            You are Johnny, a voice assistant on an Android phone for a person who cannot use their hands.
+            You are Zol (زول), a voice assistant on an Android phone for a person who cannot use their hands.
             The user's sentence comes from speech recognition (Arabic, Sudanese dialect or English) and may contain mistakes.
             Sudanese words you will meet: داير/عايز = I want, هسي/هسه = now, شنو = what, منو = who, ياخ/يا زول = filler,
             عليك الله/بالله = please, دق ل/اضرب ل = call, ولع = turn on, طفي = turn off, جيب/وريني = open or show,
@@ -129,11 +129,11 @@ class JarvisService : AccessibilityService() {
     private var pendingUntil = 0L
     private var pendingNo: (() -> String)? = null
 
-    // after the wake word alone ("جوني") the next sentence is the command, no wake word needed
+    // after the wake word alone ("زول") the next sentence is the command, no wake word needed
     private var awakeUntil = 0L
     val awake get() = listening && SystemClock.elapsedRealtime() < awakeUntil
 
-    /** For the system check in the app: can Johnny speak? */
+    /** For the system check in the app: can Zol speak? */
     val voiceReady get() = ttsReady
 
     /** Is an Arabic voice installed? null until the engine has answered. Without it Arabic replies are silent or garbled. */
@@ -169,6 +169,7 @@ class JarvisService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        Commands.setWake(prefs.getString("wake_word", "زول"))
         initVoice()
         log("الخدمة تعمل.")
         ProactiveReceiver.schedule(this)
@@ -239,7 +240,7 @@ class JarvisService : AccessibilityService() {
         ensureRecognizer()
         listening = true
         errors = 0
-        log("أستمع الآن. قل: جوني ثم الأمر.")
+        log("أستمع الآن. قل: ${Commands.wakeWord} ثم الأمر.")
         paintBubble(false)
         main.removeCallbacks(alertsTask)
         main.postDelayed(alertsTask, 20_000)
@@ -270,14 +271,14 @@ class JarvisService : AccessibilityService() {
     private fun showNotification(mic: Boolean = true, cam: Boolean = head?.running == true): Boolean {
         try {
             getSystemService(NotificationManager::class.java)
-                .createNotificationChannel(NotificationChannel(CHANNEL, "Johnny", NotificationManager.IMPORTANCE_LOW))
+                .createNotificationChannel(NotificationChannel(CHANNEL, Brand.NAME, NotificationManager.IMPORTANCE_LOW))
             val n = NotificationCompat.Builder(this, CHANNEL)
                 .setSmallIcon(R.drawable.ic_mic)
-                .setContentTitle("Johnny")
+                .setContentTitle(Brand.NAME)
                 .setContentText(when {
                     mic && cam -> "أستمع، والمؤشر يتبع رأسك"
                     cam -> "المؤشر يتبع رأسك"
-                    else -> "أستمع... قل: جوني"
+                    else -> "أستمع... قل: ${Commands.wakeWord}"
                 })
                 .setOngoing(true)
                 .build()
@@ -490,7 +491,7 @@ class JarvisService : AccessibilityService() {
             }
             if (failed.isNotEmpty()) main.post {
                 val text = failed.joinToString(" ")
-                log("جوني: $text")
+                log("${Brand.NAME}: $text")
                 say(text, add = true)
             }
         }.start()
@@ -778,7 +779,7 @@ class JarvisService : AccessibilityService() {
     }
 
     private fun notifyCaregiver(): String =
-        if (smsCaregiver("جوني: أحتاج إليك إن أمكن.")) t("أبلغت المرافق.", "Your caregiver has been told.")
+        if (smsCaregiver("زول: أحتاج إليك إن أمكن.")) t("أبلغت المرافق.", "Your caregiver has been told.")
         else t("لم أستطع إبلاغ المرافق. تأكد من رقمه وإذن الرسائل.", "I could not tell your caregiver. Check the number and SMS permission.")
 
     // ---- local language model (optional)
@@ -875,7 +876,7 @@ class JarvisService : AccessibilityService() {
             val node = labels.firstNotNullOfOrNull { findByLabel(it) }
             if (node != null) press(node)
             else if (attemptsLeft > 0) main.postDelayed({ press(attemptsLeft - 1) }, 1000)
-            else { log("جوني: لم أجد زر الالتقاط. قل: الأرقام ثم رقم الزر."); say(t("لم أجد زر الالتقاط.", "I could not find the shutter button.")) }
+            else { log("${Brand.NAME}: لم أجد زر الالتقاط. قل: الأرقام ثم رقم الزر."); say(t("لم أجد زر الالتقاط.", "I could not find the shutter button.")) }
         }
         main.postDelayed({ press(3) }, 2500L + seconds * 1000L)
         return if (seconds > 0) t("سألتقط الصورة بعد $seconds ثوانٍ.", "Photo in $seconds seconds.") else t("حاضر.", "Done.")
@@ -1024,7 +1025,7 @@ class JarvisService : AccessibilityService() {
         return true
     }
 
-    // ---- what Johnny remembers: notes, and nicknames used when calling or messaging
+    // ---- what Zol remembers: notes, and nicknames used when calling or messaging
 
     private fun memoryLines() = prefs.getString("memory", "").orEmpty().lines().filter { it.isNotBlank() }
 
@@ -1115,7 +1116,7 @@ class JarvisService : AccessibilityService() {
         agentStep = 0
         agentDone.clear()
         main.postDelayed(agentRunnable, 2500)
-        return t("حاضر، سأنفذ المهمة خطوة خطوة. قل: جوني توقف، للإلغاء.", "On it, step by step. Say: Johnny stop, to cancel.")
+        return t("حاضر، سأنفذ المهمة خطوة خطوة. قل: ${Commands.wakeWord} توقف، للإلغاء.", "On it, step by step. Say: ${Commands.wakeWord} stop, to cancel.")
     }
 
     private fun stopAgent(message: String) {
@@ -1217,7 +1218,7 @@ class JarvisService : AccessibilityService() {
             log("خطأ في الاستماع: ${errName(code)} ($code)." + if (code in listOf(1, 2, 4)) " لا يوجد إنترنت، والاستماع دون إنترنت يحتاج حزمة العربية." else "")
         } else {
             sameErr++
-            if (sameErr == 3 && code == 10) log("أندرويد يرفض طلبات الاستماع. أعد تشغيل الهاتف، أو امسح ذاكرة تطبيق Google ثم أعد تشغيل خدمة جوني.")
+            if (sameErr == 3 && code == 10) log("أندرويد يرفض طلبات الاستماع. أعد تشغيل الهاتف، أو امسح ذاكرة تطبيق Google ثم أعد تشغيل خدمة زول.")
             else if (sameErr == 6 || sameErr % 30 == 0) log("الخطأ ${errName(code)} يتكرر ($sameErr مرة).")
         }
     }
@@ -1296,7 +1297,7 @@ class JarvisService : AccessibilityService() {
             val commands = list.mapNotNull { Commands.stripWake(it) }
             val command = commands.firstOrNull { Commands.parse(it) != null } ?: commands.firstOrNull()
             val wasAwake = SystemClock.elapsedRealtime() < awakeUntil
-            // woken by "جوني" a moment ago: take what was just said as the command itself
+            // woken by the wake word a moment ago: take what was just said as the command itself
             val followUp = if (wasAwake && command == null)
                 list.firstOrNull { it.isNotBlank() && Commands.parse(it) != null } ?: heard.takeIf { it.isNotBlank() }
             else null
@@ -1307,7 +1308,7 @@ class JarvisService : AccessibilityService() {
                 followUp != null -> { awakeUntil = 0L; log("سمعت: ${if (secretPending != null) "••••" else heard}"); handleText(followUp) }
                 number != null -> { log("سمعت: ${if (secretPending != null) "••••" else heard}"); handleText(number.toString()) }   // numbers are showing
                 else -> {                                // speech without the wake word: ignore it
-                    if (heard.isNotBlank()) log("(بدون كلمة جوني) سمعت: $heard")
+                    if (heard.isNotBlank()) log("(بدون كلمة ${Commands.wakeWord}) سمعت: $heard")
                     resume(200)
                 }
             }
@@ -1321,6 +1322,7 @@ class JarvisService : AccessibilityService() {
         Commands.userDict = Commands.parseDict(prefs.getString("dialect", "").orEmpty())
         Commands.userPhrases = Commands.parsePhrases(prefs.getString("phrases", "").orEmpty())
         Commands.homeDevices = devices().keys
+        Commands.setWake(prefs.getString("wake_word", "زول"))
         if (text.isNotBlank()) prefs.edit().putBoolean("tested", true).apply()
         if (trainQueue != null && text.isNotBlank()) {
             if (Commands.isEmergency(text)) trainQueue = null else { trainHeard(listOf(text)); return }
@@ -1368,7 +1370,7 @@ class JarvisService : AccessibilityService() {
     }
 
     private fun respond(reply: String) {
-        if (reply.isNotBlank()) log("جوني: $reply")
+        if (reply.isNotBlank()) log("${Brand.NAME}: $reply")
         say(reply)
     }
 
@@ -1382,24 +1384,59 @@ class JarvisService : AccessibilityService() {
 
     fun headRunning() = head?.running == true
 
+    private fun longPressAt(x: Float, y: Float) {
+        gesture(Path().apply { moveTo(x, y); lineTo(x + 1f, y) }, 800)
+    }
+
+    /** A button of the head dock. [x], [y]: the last place the person aimed at, so scrolling moves that list. */
+    private fun headAction(action: HeadControl.Action, x: Float, y: Float) {
+        when (action) {
+            HeadControl.Action.SCROLL_UP -> swipeAt(x, y, false)
+            HeadControl.Action.SCROLL_DOWN -> swipeAt(x, y, true)
+            HeadControl.Action.BACK -> performGlobalAction(GLOBAL_ACTION_BACK)
+            HeadControl.Action.HOME -> performGlobalAction(GLOBAL_ACTION_HOME)
+            HeadControl.Action.NOTIFICATIONS -> performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
+            else -> return
+        }
+        beep(2)
+    }
+
+    /** Scroll the content under (x, y) by about a third of the screen. */
+    private fun swipeAt(x: Float, y: Float, down: Boolean) {
+        val dm = resources.displayMetrics
+        val h = dm.heightPixels.toFloat()
+        val half = h * 0.17f
+        val cy = y.coerceIn(h * 0.25f, h * 0.75f)
+        val cx = x.coerceIn(dm.widthPixels * 0.15f, dm.widthPixels * 0.85f)
+        gesture(Path().apply {
+            if (down) { moveTo(cx, cy + half); lineTo(cx, cy - half) } else { moveTo(cx, cy - half); lineTo(cx, cy + half) }
+        }, 280)
+    }
+
     /** Start the head pointer. Works best when started from the app: Android lets the camera start only while the app is in use. */
     fun startHead(): String {
-        if (!granted(Manifest.permission.CAMERA)) return t("أحتاج إذن الكاميرا. افتح تطبيق جوني ← الإعدادات ← التحكم بالرأس.", "I need the camera permission.")
+        if (!granted(Manifest.permission.CAMERA)) return t("أحتاج إذن الكاميرا. افتح تطبيق زول ← الإعدادات ← التحكم بالرأس.", "I need the camera permission.")
         if (head?.running == true) return t("التحكم بالرأس يعمل.", "Head control is on.")
-        val control = HeadControl(this, onTap = { x, y -> tapAt(x, y); beep(2) }, onStatus = { log("جوني: $it") })
+        val control = HeadControl(this,
+            onTap = { x, y -> tapAt(x, y); beep(2) },
+            onLongPress = { x, y -> longPressAt(x, y); beep(2) },
+            onAction = { action, x, y -> headAction(action, x, y) },
+            onStatus = { log("${Brand.NAME}: $it") })
         head = control
         control.start(
             speed = prefs.getFloat("head_speed", 1f),
             dwellMs = prefs.getLong("head_dwell", 1500L),
             dwellOn = prefs.getBoolean("head_dwell_on", true),
             blinkTap = prefs.getBoolean("head_blink", false),
+            smileTap = prefs.getBoolean("head_smile", false),
             invertX = prefs.getBoolean("head_invert", false),
+            dock = prefs.getString("head_dock", "left") ?: "left",
         )
         if (!showNotification(listening, true)) {
             control.stop(); head = null
             updateForeground()
-            return t("لم يسمح أندرويد بتشغيل الكاميرا من الخلفية. افتح تطبيق جوني واضغط «ابدأ التحكم بالرأس».",
-                "Android blocked the camera from the background. Open Johnny and start it there.")
+            return t("لم يسمح أندرويد بتشغيل الكاميرا من الخلفية. افتح تطبيق زول واضغط «ابدأ التحكم بالرأس».",
+                "Android blocked the camera from the background. Open Zol and start it there.")
         }
         hideNumbers(); hideGrid()
         return t("شغّلت التحكم بالرأس. انظر إلى الأمام لحظة، ثم حرّك رأسك. ثبّت الدائرة لتضغط، أو قل: اضغط هنا.",
@@ -1465,11 +1502,11 @@ class JarvisService : AccessibilityService() {
 
     /**
      * Ask "did you do it?". An alarm for the next try is set at once, so a reminder that gets no answer at all
-     * (Johnny not listening, phone asleep) still comes back; "نعم" cancels it. After 3 tries the caregiver is told.
+     * (Zol not listening, phone asleep) still comes back; "نعم" cancels it. After 3 tries the caregiver is told.
      */
     private fun askReminder(text: String, attempt: Int) {
         if (attempt > 3) {
-            val told = prefs.getBoolean("pro_care", false) && smsCaregiver("تنبيه من جوني: لم يتم تأكيد «$text» بعد 3 تذكيرات.")
+            val told = prefs.getBoolean("pro_care", false) && smsCaregiver("تنبيه من زول: لم يتم تأكيد «$text» بعد 3 تذكيرات.")
             if (told) announce(t("لم تؤكد «$text»، فأرسلت رسالة للمرافق.", "Not confirmed: I texted your caregiver."), false, urgent = true)
             return
         }
@@ -1529,7 +1566,7 @@ class JarvisService : AccessibilityService() {
 
     // ------------------------------------------------------------------ dialect training ("دربني")
 
-    /** Johnny names a command; the person says it their own way; what he does not understand yet is learned. */
+    /** Zol names a command; the person says it their own way; what he does not understand yet is learned. */
     private val trainTargets = listOf(
         "افتح الواتساب", "اتصل بامي", "ولع النور", "طفي النور", "كم الساعه", "البطاريه", "انزل", "اطلع", "ارجع",
         "الشاشه الرئيسيه", "اقرا الشاشه", "اقرا الاشعارات", "اقرا اخر رساله", "علي الصوت", "وطي الصوت", "ولع الكشاف",
@@ -1546,7 +1583,7 @@ class JarvisService : AccessibilityService() {
         trainLearned = 0; trainKnown = 0
         trainCurrent = trainQueue!!.removeFirst()
         awakeUntil = SystemClock.elapsedRealtime() + 30_000
-        return "تمام، نبدأ التدريب. أقول لك أمراً وتقوله أنت بطريقتك، بدون كلمة جوني. " +
+        return "تمام، نبدأ التدريب. أقول لك أمراً وتقوله أنت بطريقتك، بدون كلمة ${Commands.wakeWord}. " +
             "قل «التالي» لتتخطى و«خلاص» لتنهي. ${trainTargets.size} أمراً. الأول: كيف تقول «$trainCurrent»؟"
     }
 
@@ -1616,7 +1653,7 @@ class JarvisService : AccessibilityService() {
             t("حدث خطأ: ${e.message}", "Error: ${e.message}")
         }
         if (index + 1 < commands.size) {
-            log("جوني: $reply")
+            log("${Brand.NAME}: $reply")
             main.postDelayed({ runAll(commands, index + 1) }, 1600)
         } else {
             respond(reply)
@@ -1628,7 +1665,7 @@ class JarvisService : AccessibilityService() {
     private fun aiReady() = prefs.getString("ai_url", "").orEmpty().isNotBlank() &&
         prefs.getString("ai_model", "").orEmpty().isNotBlank()
 
-    /** The fixed instructions plus what is useful to know right now: facts the person told Johnny, devices, current app. */
+    /** The fixed instructions plus what is useful to know right now: facts the person told Zol, devices, current app. */
     private fun aiPrompt(): String = buildString {
         append(AI_PROMPT)
         val facts = prefs.getString("memory", "").orEmpty().lines().filter { it.isNotBlank() }.take(15)
@@ -1855,7 +1892,7 @@ class JarvisService : AccessibilityService() {
             }
             is Cmd.Chat -> when (c.kind) {
                 "thanks" -> t("العفو.", "You are welcome.")
-                "who" -> t("أنا جوني، مساعدك الصوتي. أتحكم في الهاتف بصوتك.", "I am جوني, your voice assistant.")
+                "who" -> t("أنا زول، مساعدك الصوتي. أتحكم في الهاتف بصوتك.", "I am Zol, your voice assistant.")
                 "how" -> t("تمام الحمد لله. كيف أساعدك؟", "I am fine. How can I help?")
                 else -> t("وعليكم السلام، أهلاً بك.", "Hello.")
             }
@@ -1872,9 +1909,9 @@ class JarvisService : AccessibilityService() {
             }
             Cmd.Help -> t(
                 "أستطيع فتح التطبيقات، الاتصال، إرسال الرسائل، الكتابة، الضغط على الأزرار، قراءة الشاشة، " +
-                    "ضبط المنبه، وتشغيل أجهزة المنزل. مثلاً قل: جوني افتح الواتساب. أو قل: جوني الأرقام.",
+                    "ضبط المنبه، وتشغيل أجهزة المنزل. مثلاً قل: ${Commands.wakeWord} افتح الواتساب. أو قل: ${Commands.wakeWord} الأرقام.",
                 "I can open apps, call, send messages, type, press buttons, read the screen, set alarms and control " +
-                    "home devices. For example say: Johnny open WhatsApp. Or say: Johnny numbers.")
+                    "home devices. For example say: Zol open WhatsApp. Or say: Zol numbers.")
             Cmd.ClearText -> clearText()
             Cmd.Send -> send()
             is Cmd.Search -> searchHere(c.query) ?: run {
@@ -1920,6 +1957,10 @@ class JarvisService : AccessibilityService() {
             Cmd.HeadCenter -> head?.takeIf { it.running }?.let { it.recenter(); t("انظر إلى الأمام لحظة… رجعت المؤشر للوسط.", "Look straight ahead… pointer centred.") }
                 ?: t("التحكم بالرأس متوقف. قل: شغّل التحكم بالرأس.", "Head control is off.")
             Cmd.ListReminders -> listReminders()
+            Cmd.LongHere -> head?.takeIf { it.running }?.position()?.let { (x, y) -> longPressAt(x, y); t("حاضر.", "Done.") }
+                ?: t("شغّل التحكم بالرأس أولاً، ثم وجّه الدائرة وقل: اضغط مطوّل هنا.", "Start head control first.")
+            is Cmd.HeadPause -> head?.takeIf { it.running }?.let { it.setPaused(c.on); if (c.on) t("أوقفت الضغط بالرأس. المؤشر يتحرك لكنه لا يضغط.", "Head clicking paused.") else t("رجع الضغط بالرأس.", "Head clicking resumed.") }
+                ?: t("التحكم بالرأس متوقف.", "Head control is off.")
             is Cmd.DeleteReminder -> deleteReminder(c.name)
             is Cmd.Teach -> teach(c.phrase, c.meaning)
             Cmd.Hush -> {
@@ -2105,7 +2146,7 @@ class JarvisService : AccessibilityService() {
 
     // ------------------------------------------------------------------ floating button
 
-    /** A small round button over every app. Tap: listen / stop. Hold: open Johnny. Drag to the bottom: remove. */
+    /** A small round button over every app. Tap: listen / stop. Hold: open Zol. Drag to the bottom: remove. */
     fun showBubble() {
         if (bubble != null) return
         val wm = getSystemService(WINDOW_SERVICE) as WindowManager
@@ -2116,7 +2157,7 @@ class JarvisService : AccessibilityService() {
         view.setImageResource(R.drawable.ic_mic)
         val pad = (15 * d).toInt()
         view.setPadding(pad, pad, pad, pad)
-        view.contentDescription = "Johnny"
+        view.contentDescription = "Zol"
         val lp = WindowManager.LayoutParams(
             size, size, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
@@ -2173,7 +2214,7 @@ class JarvisService : AccessibilityService() {
                         lp.y > removeLine -> {                       // dropped at the bottom: remove it
                             prefs.edit().putBoolean("bubble", false).apply()
                             hideBubble()
-                            log("أخفيت الزر العائم. لإرجاعه قل: جوني أظهر الزر.")
+                            log("أخفيت الزر العائم. لإرجاعه قل: ${Commands.wakeWord} أظهر الزر.")
                         }
                         else -> {
                             prefs.edit().putInt("bubble_x", lp.x).putInt("bubble_y", lp.y).apply()
@@ -2353,7 +2394,7 @@ class JarvisService : AccessibilityService() {
             }
             if (!ok) main.post {
                 val problem = t("لم أستطع الوصول إلى $name.", "I could not reach $name.")
-                log("جوني: $problem")
+                log("${Brand.NAME}: $problem")
                 say(problem)
             }
         }.start()
@@ -2629,14 +2670,14 @@ class JarvisService : AccessibilityService() {
                 con.readTimeout = 10000
                 con.setRequestProperty("Priority", "urgent")
                 con.setRequestProperty("Tags", "rotating_light")
-                con.outputStream.use { it.write("جوني: طلب مساعدة عاجل".toByteArray()) }
+                con.outputStream.use { it.write("زول: طلب مساعدة عاجل".toByteArray()) }
                 log(if (con.responseCode in 200..299) "تم إرسال تنبيه الطوارئ." else "فشل إرسال التنبيه (${con.responseCode}).")
                 con.disconnect()
             } catch (e: Exception) {
                 log("فشل إرسال التنبيه: ${e.message}")
             }
         }.start()
-        smsCaregiver("جوني: طلب مساعدة عاجل!")
+        smsCaregiver("زول: طلب مساعدة عاجل!")
         val called = number.isNotEmpty() && dial(number) == t("جاري الاتصال.", "Calling.")
         return when {
             called -> t("أتصل بالمرافق الآن.", "Calling your caregiver now.")

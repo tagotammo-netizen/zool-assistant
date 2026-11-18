@@ -10,7 +10,7 @@ import kotlin.math.min
  *
  * The head works like a joystick: looking straight ahead keeps the pointer still, turning the head moves it,
  * further turns move it faster. Keeping the pointer still for [dwellMs] taps there ("dwell click").
- * Closing both eyes for a short moment can tap too, when [blinkTap] is on.
+ * Closing both eyes for a short moment can tap too, when [blinkTap] is on, and so can a smile, when [smileTap] is on.
  */
 class HeadTracker(width: Int, height: Int, private val density: Float) {
 
@@ -27,6 +27,7 @@ class HeadTracker(width: Int, height: Int, private val density: Float) {
     var dwellMs = 1500L
     var dwellOn = true
     var blinkTap = false
+    var smileTap = false
     var invertX = false
     var invertY = false
 
@@ -51,6 +52,8 @@ class HeadTracker(width: Int, height: Int, private val density: Float) {
     private var armed = true                          // after a tap the pointer must move away before the next one
 
     private var eyesClosedSince = -1L
+    private var smilingSince = -1L
+    private var smileUsed = false                     // one smile, one tap: the face must relax before the next
 
     init { recenter() }
 
@@ -75,7 +78,7 @@ class HeadTracker(width: Int, height: Int, private val density: Float) {
      * One camera frame. Angles in degrees as ML Kit reports them (null when no face was found);
      * eye values are "open" probabilities 0..1 or null. [t] is a time in milliseconds.
      */
-    fun update(yaw: Float?, pitch: Float?, leftEye: Float?, rightEye: Float?, t: Long): Frame {
+    fun update(yaw: Float?, pitch: Float?, leftEye: Float?, rightEye: Float?, t: Long, smile: Float? = null): Frame {
         val dt = if (lastT < 0) 0f else min((t - lastT).coerceAtLeast(0L), 200L) / 1000f
         lastT = t
         if (yaw == null || pitch == null) {
@@ -106,8 +109,8 @@ class HeadTracker(width: Int, height: Int, private val density: Float) {
             val dx = -axis(smoothYaw - neutralYaw) * (if (invertX) -1 else 1)
             val dy = -axis(smoothPitch - neutralPitch) * (if (invertY) -1 else 1)
             val pxPerSecond = BASE_DP_PER_DEGREE * density * speed
-            x = (x + dx * pxPerSecond * dt).coerceIn(0f, width - 1f)
-            y = (y + dy * pxPerSecond * dt).coerceIn(0f, height - 1f)
+            x = (x + curve(dx) * pxPerSecond * dt).coerceIn(0f, width - 1f)
+            y = (y + curve(dy) * pxPerSecond * dt).coerceIn(0f, height - 1f)
         }
 
         var tap = false
@@ -118,6 +121,16 @@ class HeadTracker(width: Int, height: Int, private val density: Float) {
                 val closedFor = t - eyesClosedSince
                 eyesClosedSince = -1L
                 if (closedFor in BLINK_MIN_MS..BLINK_MAX_MS) tap = true   // longer than a natural blink, shorter than resting the eyes
+            }
+        }
+
+        if (smileTap && smile != null) {
+            when {
+                smile >= SMILE_ON -> {
+                    if (smilingSince < 0) smilingSince = t
+                    if (!smileUsed && t - smilingSince >= SMILE_HOLD_MS) { tap = true; smileUsed = true }
+                }
+                smile <= SMILE_OFF -> { smilingSince = -1L; smileUsed = false }
             }
         }
 
@@ -143,6 +156,26 @@ class HeadTracker(width: Int, height: Int, private val density: Float) {
         return Frame(x, y, progress, tap, true)
     }
 
+    /**
+     * Let the next dwell fire after [afterMs] instead of a full dwell, without moving away first:
+     * holding the pointer on a scroll button keeps scrolling.
+     */
+    fun repeatIn(t: Long, afterMs: Long) {
+        armed = true
+        anchorX = x; anchorY = y
+        stillSince = t - max(0L, max(dwellMs, 300L) - afterMs)
+    }
+
+    /**
+     * Small turns move slowly for precise aiming, big turns move fast to cross the screen.
+     * Equal to the straight line at 10 degrees past the dead zone.
+     */
+    private fun curve(v: Float): Float {
+        val a = abs(v)
+        val c = a * kotlin.math.sqrt(a / CURVE_KNEE)
+        return if (v < 0) -c else c
+    }
+
     /** Degrees beyond the dead zone, so small movements of a resting head do nothing. */
     private fun axis(deg: Float): Float {
         val a = abs(deg)
@@ -162,5 +195,9 @@ class HeadTracker(width: Int, height: Int, private val density: Float) {
         const val BLINK_MIN_MS = 350L
         const val BLINK_MAX_MS = 1300L
         const val FACE_GRACE_MS = 1500L
+        const val CURVE_KNEE = 10f
+        const val SMILE_ON = 0.8f
+        const val SMILE_OFF = 0.35f
+        const val SMILE_HOLD_MS = 250L
     }
 }

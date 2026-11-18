@@ -120,4 +120,70 @@ class HeadAndProactiveTest {
         assertEquals(Cmd.DeleteReminder("الدواء"), Commands.parse("امسح تذكير الدواء"))
         assertEquals(Cmd.Remind(20, 0, "بالدواء", true), Commands.parse("ذكرني بالدواء كل يوم الساعة 8 مساء"))
     }
+
+    // ---- head pointer: scrolling dock, smile, finer control
+
+    @Test fun holdingOnAScrollButtonRepeats() {
+        val h = calibrated().apply { dwellMs = 1000L }
+        var t = 1000L
+        repeat(15) { h.update(-15f, 0f, 1f, 1f, t); t += 33 }
+        var taps = 0
+        repeat(200) {                                          // ~6.6 s held still, re-armed after each tap like the dock does
+            if (h.update(0f, 0f, 1f, 1f, t).tap) { taps++; h.repeatIn(t, 650L) }
+            t += 33
+        }
+        assertTrue("taps=$taps", taps >= 8)
+    }
+
+    @Test fun smileTapsOncePerSmile() {
+        val h = calibrated().apply { dwellOn = false; smileTap = true }
+        var t = 1000L
+        fun frames(n: Int, smile: Float): Int { var taps = 0; repeat(n) { if (h.update(0f, 0f, 1f, 1f, t, smile).tap) taps++; t += 33 }; return taps }
+        assertEquals(0, frames(10, 0.1f))
+        assertEquals(1, frames(40, 0.95f))     // a long smile is still one tap
+        assertEquals(0, frames(3, 0.6f))       // half relaxed: not a new smile yet
+        assertEquals(0, frames(5, 0.1f))
+        assertEquals(1, frames(15, 0.95f))
+    }
+
+    @Test fun smallTurnsAreSlowerThanBigOnes() {
+        val small = calibrated(); val big = calibrated()
+        var t = 1000L
+        repeat(30) { small.update(-8f, 0f, 1f, 1f, t); big.update(-25f, 0f, 1f, 1f, t); t += 33 }
+        val smallMove = small.x - 500f
+        val bigMove = big.x - 500f
+        assertTrue("small=$smallMove big=$bigMove", smallMove > 0f && bigMove > smallMove * 8)
+    }
+
+    // ---- wake word
+
+    @Test fun zolWakesOnlyAtTheEdges() {
+        Commands.setWake("زول")
+        assertEquals("افتح الواتساب", Commands.stripWake("زول افتح الواتساب"))
+        assertEquals("افتح الواتساب", Commands.stripWake("يا زول افتح الواتساب"))
+        assertEquals("افتح الواتساب", Commands.stripWake("افتح الواتساب يا زول"))
+        assertNull(Commands.stripWake("امبارح شفت زول ساكن في الحلة دي"))
+        assertNull(Commands.stripWake("الزول دا جا"))
+        assertEquals("افتح الواتساب", Commands.stripWake("جوني افتح الواتساب"))      // the old name still works
+        assertEquals("زول", Commands.wakeWord)
+    }
+
+    @Test fun customWakeWord() {
+        try {
+            Commands.setWake("حبيبي")
+            assertEquals("حبيبي", Commands.wakeWord)
+            assertEquals("كم الساعه", Commands.stripWake("حبيبي كم الساعه"))
+            assertNull(Commands.stripWake("زول كم الساعه"))
+            Commands.setWake("جوني")
+            assertEquals("جوني", Commands.wakeWord)
+            assertNull(Commands.stripWake("زول كم الساعه"))
+        } finally { Commands.setWake("زول") }
+    }
+
+    @Test fun longPressAndPauseCommands() {
+        assertEquals(Cmd.LongHere, Commands.parse("اضغط مطول هنا"))
+        assertEquals(Cmd.HeadPause(true), Commands.parse("وقف الضغط"))
+        assertEquals(Cmd.HeadPause(false), Commands.parse("شغل الضغط"))
+        assertEquals(Cmd.GridHere, Commands.parse("اضغط هنا"))
+    }
 }

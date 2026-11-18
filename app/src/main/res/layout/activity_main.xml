@@ -50,7 +50,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="جوني"
+                    android:text="زول"
                     android:textColor="@color/on_surface"
                     android:textSize="21sp"
                     android:textStyle="bold" />
@@ -214,7 +214,7 @@
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
-                                android:text="لنجهّز جوني"
+                                android:text="لنجهّز زول"
                                 android:textColor="@color/on_primary_container"
                                 android:textSize="17sp"
                                 android:textStyle="bold" />
@@ -303,7 +303,7 @@
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 
-                <!-- sentences Johnny did not understand -->
+                <!-- sentences Zol did not understand -->
                 <com.google.android.material.card.MaterialCardView
                     android:id="@+id/cardLearn"
                     style="@style/JCard"
@@ -556,6 +556,69 @@
                             android:text="English" />
                     </com.google.android.material.button.MaterialButtonToggleGroup>
 
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="كلمة التنبيه" />
+
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/wakeGroup"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        app:selectionRequired="true"
+                        app:singleSelection="true">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/wakeZol"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="زول" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/wakeJohnny"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="جوني" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/wakeCustom"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="كلمة أخرى" />
+
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/wakeCustomBox"
+                        style="@style/JField"
+                        android:hint="اكتب كلمة التنبيه"
+                        android:visibility="gone">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/wakeCustom"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="text" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <TextView
+                        android:id="@+id/wakeNote"
+                        style="@style/JNote"
+                        android:text="«زول» كلمة نقولها كثيراً، فقد يستيقظ إذا سمع «يا زول» في حديث عادي. لذلك لا يستيقظ إلا إذا جاءت في أول الجملة أو آخرها." />
+
                     <com.google.android.material.materialswitch.MaterialSwitch
                         android:id="@+id/switchTones"
                         style="@style/JSwitch"
@@ -598,7 +661,7 @@
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnTrain"
                         style="@style/JTonal"
-                        android:text="درّب جوني على صوتي (15 جملة)" />
+                        android:text="درّب زول على صوتي (15 جملة)" />
 
                     <TextView
                         style="@style/JLabel"
@@ -639,7 +702,7 @@
                     <TextView
                         style="@style/JNote"
                         android:layout_marginTop="0dp"
-                        android:text="قل «ساعدوني» في أي وقت، دون كلمة جوني، فيتصل جوني بهذا الرقم ويرسل له رسالة." />
+                        android:text="قل «ساعدوني» في أي وقت، دون كلمة التنبيه، فيتصل زول بهذا الرقم ويرسل له رسالة." />
 
                     <com.google.android.material.textfield.TextInputLayout
                         style="@style/JField"
@@ -719,7 +782,7 @@
                     <TextView
                         style="@style/JNote"
                         android:layout_marginTop="0dp"
-                        android:text="اختياري. الجملة التي لا يفهمها جوني محلياً تُرسل إلى الخدمة التي تختارها. بدون عنوان ونموذج لا يُرسل شيء." />
+                        android:text="اختياري. الجملة التي لا يفهمها زول محلياً تُرسل إلى الخدمة التي تختارها. بدون عنوان ونموذج لا يُرسل شيء." />
 
                     <LinearLayout
                         android:layout_width="match_parent"
@@ -853,7 +916,7 @@
                     <TextView
                         style="@style/JNote"
                         android:layout_marginTop="0dp"
-                        android:text="جوني يبادر بالكلام: يذكّرك وينتظر «نعم»، يقرأ رسائل من يهمّك فوراً، وينبّهك للبطارية." />
+                        android:text="زول يبادر بالكلام: يذكّرك وينتظر «نعم»، يقرأ رسائل من يهمّك فوراً، وينبّهك للبطارية." />
 
                     <com.google.android.material.materialswitch.MaterialSwitch
                         android:id="@+id/switchPro"
@@ -1050,11 +1113,64 @@
 
                     </com.google.android.material.button.MaterialButtonToggleGroup>
 
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="شريط الأزرار (تمرير، رجوع، الرئيسية…)" />
+
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/headDockGroup"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        app:selectionRequired="true"
+                        app:singleSelection="true">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/dockLeft"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="يسار" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/dockRight"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="يمين" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/dockOff"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="بدون" />
+
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+                    <TextView
+                        style="@style/JNote"
+                        android:text="ثبّت الدائرة على ▲ أو ▼ فيستمر التمرير ما دامت عليه، ويمرّر آخر مكان وجّهت إليه." />
+
                     <com.google.android.material.materialswitch.MaterialSwitch
                         android:id="@+id/switchHeadDwell"
                         style="@style/JSwitch"
                         android:layout_marginTop="8dp"
                         android:text="الضغط بتثبيت الدائرة" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchHeadSmile"
+                        style="@style/JSwitch"
+                        android:text="الضغط بالابتسام" />
 
                     <com.google.android.material.materialswitch.MaterialSwitch
                         android:id="@+id/switchHeadBlink"
@@ -1165,7 +1281,7 @@
                     <TextView
                         style="@style/JNote"
                         android:layout_marginTop="0dp"
-                        android:text="أسرع طريقة: قل «جوني دربني». يقول لك أمراً بالفصحى فتقوله أنت بلهجتك، وما لا يفهمه يحفظه. أو قل: لما أقول ... يعني ..." />
+                        android:text="أسرع طريقة: قل «زول دربني». يقول لك أمراً بالفصحى فتقوله أنت بلهجتك، وما لا يفهمه يحفظه. أو قل: لما أقول ... يعني ..." />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnDialectTrain"
@@ -1195,7 +1311,7 @@
 
                     <TextView
                         style="@style/JLabel"
-                        android:text="جمل علّمتها لجوني" />
+                        android:text="جمل علّمتها لزول" />
 
                     <TextView
                         style="@style/JNote"
@@ -1236,7 +1352,7 @@
                         android:id="@+id/btnBattery"
                         style="@style/JTonal"
                         android:layout_marginTop="0dp"
-                        android:text="استثناء جوني من توفير البطارية" />
+                        android:text="استثناء زول من توفير البطارية" />
 
                     <com.google.android.material.materialswitch.MaterialSwitch
                         android:id="@+id/switchEcoLow"

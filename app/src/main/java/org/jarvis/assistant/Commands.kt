@@ -57,6 +57,8 @@ sealed class Cmd {
     object Time : Cmd()
     data class Head(val on: Boolean) : Cmd()                 // pointer moved by the head through the front camera
     object HeadCenter : Cmd()
+    object LongHere : Cmd()                                  // long press where the head pointer is
+    data class HeadPause(val on: Boolean) : Cmd()
     object ListReminders : Cmd()
     data class DeleteReminder(val name: String) : Cmd()
     object Train : Cmd()                                     // "دربني": voice training of the person's own dialect
@@ -68,8 +70,36 @@ sealed class Cmd {
 }
 
 /** Keyword command parser: Arabic, Sudanese dialect and English. No model, works offline, instant. */
+/** The assistant's name. Package and class names keep the old "jarvis" so existing installs update in place. */
+object Brand {
+    const val NAME = "زول"
+    const val NAME_EN = "Zol"
+}
+
 object Commands {
     private val WAKE = setOf("جوني", "جونى", "جونيي", "جوني", "جونيه", "جون", "جني", "جوناي", "جونيا", "johnny", "jonny", "johnie", "joni", "jony", "johny", "جارفيس", "جارفس", "جرفيس", "جارفيز", "جافيس", "جارفز", "jarvis")
+    /** Ways the recogniser writes "زول". */
+    private val ZOL = setOf("زول", "زوول", "زولل", "زل", "zol", "zool", "zoul", "zole")
+
+    /** The word the person calls the assistant by, as shown in hints. Set from settings ("wake_word"). */
+    @Volatile var wakeWord: String = "زول"
+        private set
+
+    /** Wake words chosen in settings. They also count only at the start or end of a sentence (see [stripWake]). */
+    @Volatile private var chosenWake: Set<String> = ZOL
+
+    /** "زول", "جوني", or any word the person typed. "جوني" and the old names always keep working. */
+    fun setWake(choice: String?) {
+        val c = choice?.trim().orEmpty()
+        when {
+            c.isEmpty() || normalize(c) in ZOL -> { wakeWord = "زول"; chosenWake = ZOL }
+            normalize(c) in WAKE -> { wakeWord = "جوني"; chosenWake = emptySet() }
+            else -> { wakeWord = c; chosenWake = setOf(normalize(c).replace(" ", "")) }
+        }
+    }
+
+    private val WAKE_LEAD = setOf("يا", "ياخ", "هاي", "هي", "طيب", "ممكن", "اها", "يلا", "hey", "hi", "ok", "okay")
+
     private val EMERGENCY = listOf("ساعدوني", "ساعدني", "النجده", "الحقوني", "الحقني", "طوارئ", "help me", "emergency")
 
     /** Arabic names people say -> words found in app labels. */
@@ -161,7 +191,7 @@ object Commands {
     private val HANGUP = setOf("انهي المكالمه", "انه المكالمه", "اقفل المكالمه", "سكر المكالمه", "اقفل الخط", "سكر الخط",
         "انهي الاتصال", "ارفض", "ارفض المكالمه", "ارفض الاتصال", "رفض", "hang up", "end call", "end the call", "reject", "decline")
     private val SPEAKER_ON = setOf("شغل المكبر", "فعل المكبر", "افتح المكبر", "مكبر الصوت", "شغل مكبر الصوت", "شغل السماعه", "speaker on", "loudspeaker", "speakerphone")
-    /** Whole sentence only: "وقف" inside "وقف المروحه" must not silence Johnny. */
+    /** Whole sentence only: "وقف" inside "وقف المروحه" must not silence Zol. */
     private val HUSH = setOf("اسكت", "اسكتي", "سكت", "بس", "بس خلاص", "خلاص", "خلاص بس", "كفايه", "وقف الكلام", "بطل كلام", "وقف", "اوقف",
         "shut up", "be quiet", "stop talking", "quiet")
     private val SPEAKER_OFF = setOf("طفي المكبر", "اطفي المكبر", "اغلق المكبر", "اقفل المكبر", "قفل المكبر", "speaker off")
@@ -236,9 +266,12 @@ object Commands {
             "شيل المؤشر", "اخف المؤشر", "وقف مؤشر الراس", "head control off", "stop head control") to Cmd.Head(false),
         listOf("التحكم بالراس", "تحكم بالراس", "الماوس بالراس", "مؤشر الراس", "شغل الماوس", "شغل المؤشر", "اظهر المؤشر",
             "head control", "head mouse", "head pointer") to Cmd.Head(true),
+        listOf("اضغط مطول هنا", "اضغط مطولا هنا", "ضغطه مطوله هنا", "ضغطه مطوله", "اضغط مطول", "دوس مطول", "long press here", "long press") to Cmd.LongHere,
+        listOf("وقف الضغط", "اوقف الضغط", "ايقاف الضغط", "pause clicking") to Cmd.HeadPause(true),
+        listOf("شغل الضغط", "رجع الضغط", "استانف الضغط", "resume clicking") to Cmd.HeadPause(false),
         listOf("وسط المؤشر", "وسط الماوس", "رجع المؤشر", "اضبط المؤشر", "عاير المؤشر", "center pointer", "recenter") to Cmd.HeadCenter,
         listOf("شنو تذكيراتي", "ما هي تذكيراتي", "تذكيراتي", "اقرا التذكيرات", "التذكيرات", "مواعيدي", "my reminders", "read reminders") to Cmd.ListReminders,
-        listOf("دربني", "دربيني", "دربنى", "تدريب اللهجه", "درب جوني", "ابدا التدريب", "ابدا تدريب", "علم جوني", "train me", "start training") to Cmd.Train,
+        listOf("دربني", "دربيني", "دربنى", "تدريب اللهجه", "درب جوني", "درب زول", "ابدا التدريب", "ابدا تدريب", "علم جوني", "علم زول", "train me", "start training") to Cmd.Train,
         listOf("سكت الصوت", "اكتم الصوت", "كتم الصوت", "اقفل الصوت", "الصامت", "mute") to Cmd.Mute(true),
         listOf("رجع الصوت", "شغل الصوت", "الغ الكتم", "فك الكتم", "unmute") to Cmd.Mute(false),
         listOf("ولع البطاريه", "شغل البطاريه", "افتح البطاريه") to Cmd.Flashlight(true),
@@ -419,10 +452,20 @@ object Commands {
     /** Returns the command part if the wake word was said ("" if only the wake word), else null. */
     fun stripWake(text: String): String? {
         val w = words(text)
-        var i = w.indexOfFirst { normalize(it) in WAKE || skeleton(it) in WAKE_SOUNDS }
+        // a chosen everyday word like "زول" wakes only at the start ("زول افتح…", "يا زول افتح…") or at the end,
+        // so "شفت زول ساكن هناك" said to someone else does not wake it
+        val chosen = chosenWake
+        fun everyday(i: Int) = i == 0 || i == w.size - 1 || (i == 1 && normalize(w[0]) in WAKE_LEAD)
+        var i = w.indices.firstOrNull { idx ->
+            val n = normalize(w[idx])
+            n in WAKE || skeleton(w[idx]) in WAKE_SOUNDS || (n in chosen && everyday(idx))
+        } ?: -1
         var size = 1
         if (i < 0) {                                   // written as two words, e.g. "جار فيس"
-            i = (0 until w.size - 1).firstOrNull { skeleton(w[it] + w[it + 1]) in WAKE_SOUNDS || normalize(w[it] + w[it + 1]) in WAKE } ?: -1
+            i = (0 until w.size - 1).firstOrNull {
+                skeleton(w[it] + w[it + 1]) in WAKE_SOUNDS || normalize(w[it] + w[it + 1]) in WAKE ||
+                    (normalize(w[it] + w[it + 1]) in chosen && everyday(it))
+            } ?: -1
             size = 2
         }
         if (i < 0) return null

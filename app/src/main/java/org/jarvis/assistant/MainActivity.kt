@@ -84,8 +84,10 @@ class MainActivity : AppCompatActivity() {
         Triple(R.id.switchPro, "pro_on", false), Triple(R.id.switchProCare, "pro_care", false),
         Triple(R.id.switchProMorning, "pro_morning", true), Triple(R.id.switchProBattery, "pro_battery", true),
         Triple(R.id.switchHeadDwell, "head_dwell_on", true), Triple(R.id.switchHeadBlink, "head_blink", false),
-        Triple(R.id.switchHeadInvert, "head_invert", false),
+        Triple(R.id.switchHeadInvert, "head_invert", false), Triple(R.id.switchHeadSmile, "head_smile", false),
     )
+
+    private val docks = listOf(R.id.dockLeft to "left", R.id.dockRight to "right", R.id.dockOff to "off")
 
     private val headSpeeds = listOf(R.id.headSlow to 0.6f, R.id.headNormal to 1f, R.id.headFast to 1.7f)
     private val headDwells = listOf(R.id.dwellShort to 1000L, R.id.dwellMid to 1500L, R.id.dwellLong to 2500L)
@@ -143,7 +145,7 @@ class MainActivity : AppCompatActivity() {
             val text = input.text.toString().trim()
             val service = JarvisService.instance
             if (service == null) {
-                toast("فعّل خدمة جوني أولاً")
+                toast("فعّل خدمة زول أولاً")
             } else if (text.isNotEmpty()) {
                 JarvisService.history.add("أنت: $text")
                 input.setText("")
@@ -171,7 +173,7 @@ class MainActivity : AppCompatActivity() {
         drawer.addDrawerListener(object : DrawerLayout.SimpleDrawerListener() {
             private var fresh = false
 
-            /** Johnny may have learned sentences by voice since the drawer was last open: show the saved values, not old ones. */
+            /** Zol may have learned sentences by voice since the drawer was last open: show the saved values, not old ones. */
             override fun onDrawerStateChanged(newState: Int) {
                 if (newState != DrawerLayout.STATE_IDLE && !fresh && !drawerOpen()) { loadSettings(); fresh = true }
                 if (newState == DrawerLayout.STATE_IDLE && !drawerOpen()) fresh = false
@@ -198,7 +200,7 @@ class MainActivity : AppCompatActivity() {
             drawer.closeDrawer(Gravity.RIGHT)
         }
         val version = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (_: Exception) { null }
-        findViewById<TextView>(R.id.versionText).text = "جوني ${version.orEmpty()} • مفتوح المصدر".replace("  ", " ")
+        findViewById<TextView>(R.id.versionText).text = "${Brand.NAME} ${version.orEmpty()} • مفتوح المصدر".replace("  ", " ")
     }
 
     private fun hideKeyboard() {
@@ -283,29 +285,29 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<View>(R.id.btnOffline).setOnClickListener {
             val service = JarvisService.instance
-            if (service == null) toast("فعّل خدمة جوني أولاً") else { service.downloadOfflinePack(); toast("يتم فحص حزمة الصوت، راقب المحادثة") }
+            if (service == null) toast("فعّل خدمة زول أولاً") else { service.downloadOfflinePack(); toast("يتم فحص حزمة الصوت، راقب المحادثة") }
         }
         findViewById<View>(R.id.btnNotifAccess).setOnClickListener { openNotificationAccess() }
         findViewById<View>(R.id.btnTrain).setOnClickListener { startTraining() }
         findViewById<View>(R.id.btnDialectTrain).setOnClickListener {
             val service = JarvisService.instance
-            if (service == null) { toast("فعّل خدمة جوني أولاً"); return@setOnClickListener }
+            if (service == null) { toast("فعّل خدمة زول أولاً"); return@setOnClickListener }
             if (!service.listening) service.startListening()
             drawer.closeDrawer(Gravity.RIGHT)
             JarvisService.history.add("أنت: دربني")
             service.handleText("دربني")
             refresh()
         }
-        findViewById<View>(R.id.btnSettingsExport).setOnClickListener { saveSettings(); exportSettingsFile.launch("johnny-settings.json") }
+        findViewById<View>(R.id.btnSettingsExport).setOnClickListener { saveSettings(); exportSettingsFile.launch("zol-settings.json") }
         findViewById<View>(R.id.btnSettingsImport).setOnClickListener { importSettingsFile.launch(arrayOf("application/json", "text/plain", "*/*")) }
         findViewById<View>(R.id.btnLlmPick).setOnClickListener { pickLlm.launch(arrayOf("*/*")) }
         findViewById<View>(R.id.btnExport).setOnClickListener { saveSettings(); exportLearning() }
         findViewById<View>(R.id.btnWhisperFolder).setOnClickListener { pickWhisperFolder.launch(null) }
         findViewById<View>(R.id.btnWhisperCheck).setOnClickListener {
             val service = JarvisService.instance
-            if (service == null) toast("فعّل خدمة جوني أولاً") else {
+            if (service == null) toast("فعّل خدمة زول أولاً") else {
                 val line = service.whisperStatus()
-                JarvisService.history.add("جوني: $line")
+                JarvisService.history.add("${Brand.NAME}: $line")
                 toast(line)
                 refresh()
             }
@@ -315,6 +317,19 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnHead).setOnClickListener { toggleHead() }
         findViewById<MaterialButtonToggleGroup>(R.id.headSpeedGroup).addOnButtonCheckedListener { _, id, isChecked ->
             if (isChecked && !loading) headSpeeds.firstOrNull { it.first == id }?.let { prefs.edit().putFloat("head_speed", it.second).apply() }
+        }
+        findViewById<MaterialButtonToggleGroup>(R.id.headDockGroup).addOnButtonCheckedListener { _, id, isChecked ->
+            if (isChecked && !loading) docks.firstOrNull { it.first == id }?.let { prefs.edit().putString("head_dock", it.second).apply() }
+        }
+        findViewById<MaterialButtonToggleGroup>(R.id.wakeGroup).addOnButtonCheckedListener { _, id, isChecked ->
+            if (!isChecked || loading) return@addOnButtonCheckedListener
+            val custom = findViewById<View>(R.id.wakeCustomBox)
+            custom.visibility = if (id == R.id.wakeCustom) View.VISIBLE else View.GONE
+            when (id) {
+                R.id.wakeZol -> setWake("زول")
+                R.id.wakeJohnny -> setWake("جوني")
+                else -> findViewById<EditText>(R.id.wakeCustom).requestFocus()
+            }
         }
         findViewById<MaterialButtonToggleGroup>(R.id.headDwellGroup).addOnButtonCheckedListener { _, id, isChecked ->
             if (isChecked && !loading) headDwells.firstOrNull { it.first == id }?.let { prefs.edit().putLong("head_dwell", it.second).apply() }
@@ -331,6 +346,15 @@ class MainActivity : AppCompatActivity() {
         findViewById<MaterialSwitch>(R.id.switchWhisper).isChecked = prefs.getString("engine", "google") == "whisper"
         findViewById<MaterialButtonToggleGroup>(R.id.langGroup)
             .check(if (prefs.getString("lang", "ar-SA") == "ar-SA") R.id.btnAr else R.id.btnEn)
+        findViewById<MaterialButtonToggleGroup>(R.id.headDockGroup)
+            .check(docks.firstOrNull { it.second == prefs.getString("head_dock", "left") }?.first ?: R.id.dockLeft)
+        val wake = prefs.getString("wake_word", "زول").orEmpty()
+        Commands.setWake(wake)
+        val wakeId = when (Commands.wakeWord) { "زول" -> R.id.wakeZol; "جوني" -> R.id.wakeJohnny; else -> R.id.wakeCustom }
+        findViewById<MaterialButtonToggleGroup>(R.id.wakeGroup).check(wakeId)
+        findViewById<View>(R.id.wakeCustomBox).visibility = if (wakeId == R.id.wakeCustom) View.VISIBLE else View.GONE
+        findViewById<EditText>(R.id.wakeCustom).setText(if (wakeId == R.id.wakeCustom) wake else "")
+        findViewById<View>(R.id.wakeNote).visibility = if (Commands.wakeWord == "زول") View.VISIBLE else View.GONE
         val speed = prefs.getFloat("head_speed", 1f)
         findViewById<MaterialButtonToggleGroup>(R.id.headSpeedGroup).check(headSpeeds.minBy { kotlin.math.abs(it.second - speed) }.first)
         val dwell = prefs.getLong("head_dwell", 1500L)
@@ -343,7 +367,20 @@ class MainActivity : AppCompatActivity() {
         val edit = prefs.edit()
         for ((id, key) in textSettings) edit.putString(key, findViewById<EditText>(id).text.toString().trim())
         edit.apply()
+        if (findViewById<MaterialButtonToggleGroup>(R.id.wakeGroup).checkedButtonId == R.id.wakeCustom) {
+            val word = findViewById<EditText>(R.id.wakeCustom).text.toString().trim()
+            if (word.isNotEmpty()) setWake(word)
+        }
         ProactiveReceiver.schedule(this)
+    }
+
+    /** Save the wake word and use it at once, here and in the service (they share [Commands]). */
+    private fun setWake(word: String) {
+        val clean = word.trim().split(Regex("\\s+")).take(2).joinToString(" ")
+        prefs.edit().putString("wake_word", clean).apply()
+        Commands.setWake(clean)
+        findViewById<TextView>(R.id.wakeNote).visibility = if (Commands.wakeWord == "زول") View.VISIBLE else View.GONE
+        if (!loading) refresh()
     }
 
     // ---- proactive assistant and head pointer
@@ -368,7 +405,7 @@ class MainActivity : AppCompatActivity() {
     /** Started from here, while the app is on screen, so Android allows the camera. */
     private fun toggleHead() {
         val service = JarvisService.instance
-        if (service == null) { toast("فعّل خدمة جوني أولاً"); return }
+        if (service == null) { toast("فعّل خدمة زول أولاً"); return }
         if (service.headRunning()) {
             note(service.stopHead())
         } else if (!granted(Manifest.permission.CAMERA)) {
@@ -383,7 +420,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun note(line: String) {
-        JarvisService.history.add("جوني: $line")
+        JarvisService.history.add("${Brand.NAME}: $line")
         toast(line)
     }
 
@@ -407,7 +444,7 @@ class MainActivity : AppCompatActivity() {
         val aiOn = model.isNotEmpty() && prefs.getString("ai_url", "").orEmpty().isNotBlank()
         val homeOn = prefs.getString("home_base", "").orEmpty().isNotBlank()
         return listOf(
-            Check("خدمة جوني", service != null, if (service != null) "تعمل" else "فعّلها") {
+            Check("خدمة زول", service != null, if (service != null) "تعمل" else "فعّلها") {
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             },
             Check("الميكروفون", granted(Manifest.permission.RECORD_AUDIO),
@@ -432,7 +469,7 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    /** Row 5: can Johnny actually speak Arabic? An engine with no Arabic voice "speaks" silence. */
+    /** Row 5: can Zol actually speak Arabic? An engine with no Arabic voice "speaks" silence. */
     private fun voiceCheck(service: JarvisService?): Check {
         val (ok, detail) = when {
             service == null -> null to "—"
@@ -537,9 +574,9 @@ class MainActivity : AppCompatActivity() {
             else -> "الاستماع متوقف"
         }
         hint.text = when {
-            service == null -> "فعّل جوني من البطاقة بالأسفل"
-            awake -> "قل الأمر الآن، لا تحتاج لقول جوني"
-            on -> "قل «جوني» وانتظر «نعم» ثم قل الأمر، أو قلهما معاً"
+            service == null -> "فعّل زول من البطاقة بالأسفل"
+            awake -> "قل الأمر الآن، لا تحتاج لقول ${Commands.wakeWord}"
+            on -> "قل «${Commands.wakeWord}» وانتظر «نعم» ثم قل الأمر، أو قلهما معاً"
             else -> "اضغط الميكروفون للبدء"
         }
         statusChip.text = when {
@@ -578,20 +615,22 @@ class MainActivity : AppCompatActivity() {
         "الوقت والتذكير" to listOf("صحّيني الساعة 7 ونص", "نبهني بعد 10 دقائق", "ذكرني بالدواء كل يوم الساعة 8 مساء",
             "كم الساعة • البطارية"),
         "الذكاء" to listOf("لخّص الرسالة • اسأل كم السعر", "نفّذ أرسل لأحمد أنني تأخرت عشر دقائق", "تذكّر أن أمي هي فاطمة ← اتصل بأمي"),
-        "التحكم بالرأس" to listOf("شغّل التحكم بالرأس ← حرّك رأسك وثبّت الدائرة لتضغط", "اضغط هنا • وسّط المؤشر", "وقّف التحكم بالرأس"),
+        "التحكم بالرأس" to listOf("شغّل التحكم بالرأس ← حرّك رأسك وثبّت الدائرة لتضغط",
+            "ثبّت على ▲ ▼ في الشريط للتمرير، وعلى ↩ للرجوع", "اضغط هنا • اضغط مطوّل هنا • وسّط المؤشر",
+            "وقّف الضغط • شغّل الضغط  (المؤشر يتحرك دون ضغط)", "وقّف التحكم بالرأس"),
         "التذكير والمبادرة" to listOf("ذكرني بالدواء كل يوم الساعة 8 مساء ← يسألك: هل فعلتها؟", "شنو تذكيراتي • امسح تذكير الدواء"),
-        "تعليم جوني لهجتك" to listOf("دربني ← يقول لك أمراً فتقوله بطريقتك", "لما أقول جيب الواتس يعني افتح الواتساب",
+        "تعليم زول لهجتك" to listOf("دربني ← يقول لك أمراً فتقوله بطريقتك", "لما أقول جيب الواتس يعني افتح الواتساب",
             "اسكت • خلاص  (يوقف الكلام)", "سكّت الصوت • رجّع الصوت"),
         "أخرى" to listOf("ايقاف مؤقت • الأغنية التالية • التقط صورة", "شغّل الكشاف • علّي الصوت • وطّي الصوت",
             "وضع السيارة • وضع الليل", "افتح الواتساب ثم انزل  (أوامر متتالية)", "كرر • أبلغ المرافق • صباح الخير", "أخفِ الزر • أظهر الزر"),
-        "الطوارئ" to listOf("ساعدوني ← دون كلمة جوني"),
+        "الطوارئ" to listOf("ساعدوني ← دون كلمة التنبيه"),
     )
 
     private fun setupGuide() {
         val header = findViewById<TextView>(R.id.guideHeader)
         val body = findViewById<LinearLayout>(R.id.guideBody)
         body.addView(TextView(this).apply {
-            text = "ابدأ كل أمر بكلمة «جوني»."
+            text = "ابدأ كل أمر بكلمة «${Commands.wakeWord}»."
             textSize = 13f
             setTextColor(ContextCompat.getColor(this@MainActivity, R.color.muted))
         })
@@ -629,7 +668,7 @@ class MainActivity : AppCompatActivity() {
                 val result = try { importWhisperFiles(tree) } catch (e: Exception) { "تعذر النسخ: ${e.message}" }
                 runOnUiThread {
                     JarvisService.instance?.resetWhisper()
-                    JarvisService.history.add("جوني: $result")
+                    JarvisService.history.add("${Brand.NAME}: $result")
                     toast(result)
                     refresh()
                 }
@@ -657,7 +696,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 runOnUiThread {
                     findViewById<MaterialSwitch>(R.id.switchLlm).isChecked = prefs.getBoolean("llm_on", false)
-                    JarvisService.history.add("جوني: $result")
+                    JarvisService.history.add("${Brand.NAME}: $result")
                     toast(result)
                     refresh()
                 }
@@ -665,10 +704,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Shares what the person taught Johnny (sentences, dialect words, unknown sentences) so the dialect can be improved. */
+    /** Shares what the person taught Zol (sentences, dialect words, unknown sentences) so the dialect can be improved. */
     private fun exportLearning() {
         val text = buildString {
-            appendLine("جوني - بيانات تحسين اللهجة")
+            appendLine("زول - بيانات تحسين اللهجة")
             appendLine("الهاتف: ${Build.MANUFACTURER} ${Build.MODEL} / أندرويد ${Build.VERSION.RELEASE}")
             appendLine()
             appendLine("## جمل علّمتها (جملة=أمر)")
@@ -684,10 +723,10 @@ class MainActivity : AppCompatActivity() {
             appendLine(prefs.getString("train_log", "").orEmpty())
         }
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain")
-            .putExtra(Intent.EXTRA_SUBJECT, "بيانات تحسين جوني").putExtra(Intent.EXTRA_TEXT, text), "شارك البيانات"))
+            .putExtra(Intent.EXTRA_SUBJECT, "بيانات تحسين زول").putExtra(Intent.EXTRA_TEXT, text), "شارك البيانات"))
     }
 
-    // ---- training: the person reads sentences, Johnny compares what the phone heard and learns the differences
+    // ---- training: the person reads sentences, Zol compares what the phone heard and learns the differences
 
     private val trainSentences = listOf(
         "افتح الواتساب", "ارجع", "انزل", "اتصل بأحمد", "شغل الكشاف", "اقرأ الشاشة", "الأرقام", "اطلع",
@@ -763,7 +802,7 @@ class MainActivity : AppCompatActivity() {
         "emergency_number", "ntfy_topic", "tones", "read_notifs", "home_alerts", "eco_low", "eco_screen", "secret_on",
         "secret", "mode", "bubble", "ai_url", "ai_model", "ai_screen", "agent_on", "memory", "aliases",
         "pro_on", "pro_reminders", "pro_people", "pro_care", "pro_morning", "pro_battery", "pro_bedtime",
-        "head_speed", "head_dwell", "head_dwell_on", "head_blink", "head_invert")
+        "head_speed", "head_dwell", "head_dwell_on", "head_blink", "head_invert", "head_smile", "head_dock", "wake_word")
 
     private val exportSettingsFile = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) {
@@ -847,7 +886,7 @@ class MainActivity : AppCompatActivity() {
     private fun steps(): List<Step> {
         val service = JarvisService.instance
         return listOf(
-            Step("تفعيل خدمة جوني في إمكانية الوصول", service != null, "فتح إعدادات إمكانية الوصول") {
+            Step("تفعيل خدمة زول في إمكانية الوصول", service != null, "فتح إعدادات إمكانية الوصول") {
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             },
             Step("أذونات الميكروفون والاتصال والرسائل", allPermissions(), "منح الأذونات") { askPermissions() },
@@ -855,14 +894,14 @@ class MainActivity : AppCompatActivity() {
             Step("حزمة الصوت العربية للعمل دون إنترنت (اختياري)",
                 prefs.getBoolean("offline_ready", false) || prefs.getBoolean("offline_checked", false), "فحص حزمة الصوت") {
                 val svc = JarvisService.instance
-                if (svc == null) toast("فعّل خدمة جوني أولاً") else {
+                if (svc == null) toast("فعّل خدمة زول أولاً") else {
                     prefs.edit().putBoolean("offline_checked", true).apply()
                     svc.downloadOfflinePack()
                 }
             },
-            Step("جرّب: قل «جوني» ثم «افتح الإعدادات»", prefs.getBoolean("tested", false), "ابدأ الاستماع") {
+            Step("جرّب: قل «${Commands.wakeWord}» ثم «افتح الإعدادات»", prefs.getBoolean("tested", false), "ابدأ الاستماع") {
                 val svc = JarvisService.instance
-                if (svc == null) toast("فعّل خدمة جوني أولاً") else if (!svc.listening) svc.startListening()
+                if (svc == null) toast("فعّل خدمة زول أولاً") else if (!svc.listening) svc.startListening()
             },
         )
     }
@@ -897,7 +936,7 @@ class MainActivity : AppCompatActivity() {
         try { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) } catch (_: Exception) { toast("افتح إعدادات الإشعارات يدوياً") }
     }
 
-    /** Sentences Johnny did not understand: tap one and write the command it should have understood. */
+    /** Sentences Zol did not understand: tap one and write the command it should have understood. */
     private fun renderLearn() {
         val card = findViewById<View>(R.id.cardLearn)
         val box = findViewById<LinearLayout>(R.id.learnList)
@@ -923,7 +962,7 @@ class MainActivity : AppCompatActivity() {
         input.hint = "مثال: افتح الواتساب"
         AlertDialog.Builder(this)
             .setTitle("ماذا كنت تقصد بـ «$sentence»؟")
-            .setMessage("اكتب الأمر القياسي الذي يفهمه جوني.")
+            .setMessage("اكتب الأمر القياسي الذي يفهمه زول.")
             .setView(input)
             .setPositiveButton("علّمه") { _, _ ->
                 val command = input.text.toString().trim()
@@ -958,12 +997,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
-    /** Conversation as chat bubbles: you on one side, Johnny on the other, system lines small and grey. */
+    /** Conversation as chat bubbles: you on one side, Zol on the other, system lines small and grey. */
     private fun renderChat(lines: List<String>) {
         chatList.removeAllViews()
         if (lines.isEmpty()) {
             chatList.addView(TextView(this).apply {
-                text = "لا توجد أوامر بعد. اضغط الميكروفون وقل: جوني"
+                text = "لا توجد أوامر بعد. اضغط الميكروفون وقل: ${Commands.wakeWord}"
                 setPadding(0, dp(6), 0, dp(6))
                 setTextColor(ContextCompat.getColor(this@MainActivity, R.color.muted))
                 textSize = 14f
@@ -972,7 +1011,7 @@ class MainActivity : AppCompatActivity() {
         }
         for (line in lines) {
             val mine = line.startsWith("أنت:") || line.startsWith("سمعت:")
-            val jarvis = line.startsWith("جوني:")
+            val jarvis = line.startsWith("${Brand.NAME}:")
             val body = line.substringAfter(":", line).trim()
             val tv = TextView(this)
             tv.text = if (mine || jarvis) body else line
@@ -1010,7 +1049,7 @@ class MainActivity : AppCompatActivity() {
             chip.isClickable = true
             chip.setOnClickListener {
                 val service = JarvisService.instance
-                if (service == null) toast("فعّل خدمة جوني أولاً") else service.handleText(command)
+                if (service == null) toast("فعّل خدمة زول أولاً") else service.handleText(command)
             }
             val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             lp.marginEnd = dp(8)
@@ -1018,7 +1057,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** A soft ring that grows and fades around the microphone while Johnny is listening. */
+    /** A soft ring that grows and fades around the microphone while Zol is listening. */
     private fun pulse() {
         if (!pulsing) {
             micRing.alpha = 0f

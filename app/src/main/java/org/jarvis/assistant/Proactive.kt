@@ -9,7 +9,7 @@ import android.os.Build
 import java.util.Calendar
 
 /**
- * The proactive assistant: Johnny speaks first. Daily reminders that wait for "نعم", messages from the people
+ * The proactive assistant: Zol speaks first. Daily reminders that wait for "نعم", messages from the people
  * who matter read at once, battery and bedtime warnings, a short morning briefing.
  * The pure parts (parsing and times) are in [ProactivePlan] so they can be tested without a phone.
  */
@@ -75,7 +75,7 @@ class ProactiveReceiver : BroadcastReceiver() {
         val attempt = intent.getIntExtra(EXTRA_ATTEMPT, 1)
         val service = JarvisService.instance
         if (service != null) service.proactiveFire(kind, text, attempt)
-        else schedule(context)          // Johnny is off: keep the plan for when he is back
+        else schedule(context)          // Zol is off: keep the plan for when he is back
     }
 
     companion object {
