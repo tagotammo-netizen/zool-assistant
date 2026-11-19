@@ -1,0 +1,1 @@
+Zol 1.5: fixes 'language not supported (12)' after an engine switch; only switches to Google engines; shows the engine in use.

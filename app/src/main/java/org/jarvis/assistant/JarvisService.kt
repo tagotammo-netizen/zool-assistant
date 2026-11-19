@@ -304,7 +304,7 @@ class JarvisService : AccessibilityService() {
         ensureRecognizer()
         listening = true
         errors = 0
-        log("أستمع الآن. قل: ${Commands.wakeWord} ثم الأمر.")
+        log("أستمع الآن (المحرك: ${engineLabel()}). قل: ${Commands.wakeWord} ثم الأمر.")
         paintBubble(false)
         main.removeCallbacks(alertsTask)
         main.postDelayed(alertsTask, 20_000)
@@ -416,8 +416,8 @@ class JarvisService : AccessibilityService() {
                 log("محرك الاستماع رافض الطلبات. بجرب محرك التلفون الداخلي.")
                 downloadOfflinePack()
             }
-            others.isNotEmpty() -> {
-                val next = others.first()
+            others.any { it.packageName.startsWith("com.google.") } -> {
+                val next = others.first { it.packageName.startsWith("com.google.") }
                 prefs.edit().putString("stt_service", next.flattenToString()).apply()
                 val name = try { packageManager.getApplicationLabel(packageManager.getApplicationInfo(next.packageName, 0)) } catch (_: Exception) { next.packageName }
                 log("محرك الاستماع رافض الطلبات. غيّرتو لمحرك تاني: $name.")
@@ -431,6 +431,20 @@ class JarvisService : AccessibilityService() {
     }
 
     private var triedOnDevice = false
+    private var langErrors = 0
+
+    /** The engine in use, by name ("Google", "Honor"...), for the log and the report. */
+    private fun engineLabel(): String {
+        val c = (prefs.getString("stt_service", null)
+            ?: android.provider.Settings.Secure.getString(contentResolver, "voice_recognition_service"))
+            ?.let { ComponentName.unflattenFromString(it) } ?: return "الأساسي"
+        return try { packageManager.getApplicationLabel(packageManager.getApplicationInfo(c.packageName, 0)).toString() }
+        catch (_: Exception) { c.packageName }
+    }
+
+    /** Google's speech engine, when it is on the phone: it knows Arabic. */
+    private fun googleEngine(): ComponentName? = recognitionServices().firstOrNull { it.packageName == "com.google.android.googlequicksearchbox" }
+        ?: recognitionServices().firstOrNull { it.packageName.startsWith("com.google.") }
 
     private fun rebuildRecognizer() {
         try { recognizer?.destroy() } catch (_: Exception) {}
@@ -1498,7 +1512,9 @@ class JarvisService : AccessibilityService() {
             val wasGate = gateActive
             endGateSession()
             noteError(error)
-            if (wasGate && error !in listOf(6, 7, 8, 10) && gateTrouble()) return
+            // "language not supported" from an engine picked earlier is that engine's fault, not the ear's
+            val engineFault = error in listOf(12, 13) && prefs.getString("stt_service", null) != null
+            if (wasGate && error !in listOf(6, 7, 8, 10) && !engineFault && gateTrouble()) return
             if (error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT ||
                 error == SpeechRecognizer.ERROR_SERVER) { if (netTrouble()) return }
             when (error) {
@@ -1521,12 +1537,25 @@ class JarvisService : AccessibilityService() {
                     ear?.quietUntil = noStartBefore
                     resume(wait)
                 }
-                12, 13 -> {                       // language not supported / not downloaded: go back to the normal recogniser
-                    if (!forceNormal || onDevice) log("حزمة الصوت العربية غير موجودة على الهاتف، أستخدم الاستماع العادي (يحتاج إنترنت).")
-                    forceNormal = true
-                    prefs.edit().putBoolean("offline_ready", false).apply()
+                12, 13 -> {                       // language not supported / not downloaded
+                    langErrors++
+                    if (onDevice) {
+                        log("حزمة الصوت العربية غير موجودة على الهاتف، أستخدم الاستماع العادي (يحتاج إنترنت).")
+                        forceNormal = true
+                        prefs.edit().putBoolean("offline_ready", false).apply()
+                    } else if (prefs.getString("stt_service", null) != null) {
+                        // an engine chosen earlier (after "too many requests") does not know Arabic: back to the phone's own
+                        log("المحرك ${engineLabel()} ما بيفهم العربي، رجعت للمحرك الأساسي.")
+                        prefs.edit().remove("stt_service").apply()
+                        gateFailed = false; gateErrors = 0; gateWorked = false   // the ear may work with the right engine
+                    } else if (langErrors == 3) {
+                        googleEngine()?.let {
+                            prefs.edit().putString("stt_service", it.flattenToString()).apply()
+                            log("المحرك الأساسي ما بيفهم العربي، بقيت أستعمل محرك Google.")
+                        }
+                    }
                     rebuildRecognizer()
-                    resume(500)
+                    resume(minOf(30_000L, 1_000L shl minOf(langErrors, 5)))   // never a tight loop
                 }
                 else -> {
                     errors++
@@ -1542,6 +1571,7 @@ class JarvisService : AccessibilityService() {
         }
 
         override fun onResults(results: Bundle?) {
+            langErrors = 0
             if (gateActive && !results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).isNullOrEmpty()) gateWorked = true
             endGateSession()
             errors = 0; silent = 0; lastErr = -1
