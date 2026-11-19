@@ -1,6 +1,14 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
 }
+
+// One key signs every build, so the in-app update can replace the installed app. It comes from
+// keystore.properties on the developer's computer, or from GitHub secrets in the cloud build; never from git.
+val keyProps = Properties()
+rootProject.file("keystore.properties").takeIf { it.exists() }?.inputStream()?.use { keyProps.load(it) }
+val storePath: String? = System.getenv("ZOL_KEYSTORE") ?: keyProps.getProperty("storeFile")
 
 android {
     namespace = "org.jarvis.assistant"
@@ -20,15 +28,9 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // One key signs every build, so the in-app update can replace the installed app. It comes from
-    // keystore.properties on the developer's computer, or from GitHub secrets in the cloud build; never from git.
-    val keyProps = java.util.Properties().apply {
-        rootProject.file("keystore.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
-    }
-    val storePath = System.getenv("ZOL_KEYSTORE") ?: keyProps.getProperty("storeFile")
     signingConfigs {
         if (storePath != null) create("zol") {
-            storeFile = rootProject.file(storePath)
+            storeFile = rootProject.file(storePath!!)
             storePassword = System.getenv("ZOL_KEYSTORE_PASSWORD") ?: keyProps.getProperty("storePassword")
             keyAlias = System.getenv("ZOL_KEY_ALIAS") ?: keyProps.getProperty("keyAlias")
             keyPassword = System.getenv("ZOL_KEY_PASSWORD") ?: keyProps.getProperty("keyPassword")
