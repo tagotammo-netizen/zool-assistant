@@ -628,7 +628,7 @@ class JarvisService : AccessibilityService() {
         !listening -> "الاستماع مقفول"
         ear == null || ear?.active != true -> "بيستعمل محرك الاستماع مباشرة"
         ear?.silenced == true -> "سكوت تام: أندرويد ما مدّي زول صوت"
-        else -> "بيسمع (أعلى صوت ${ear?.peak?.toInt() ?: 0})"
+        else -> "بيسمع (أعلى صوت ${ear?.speechPeak?.toInt() ?: 0}، تكبير ×${"%.1f".format(ear?.gain ?: 1.0)})"
     }
 
     // ------------------------------------------------------------------ listening through Gemini

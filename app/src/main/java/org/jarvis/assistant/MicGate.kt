@@ -56,6 +56,10 @@ class MicGate(
     @Volatile var peak = 0.0
         private set
     private var zeroSince = -1L
+    /** The loudness of recent speech, slowly forgotten (half after ~15 s): sets the gain for quiet microphones. */
+    @Volatile var speechPeak = 0.0
+        private set
+    val gain get() = SpeechGate.gainFor(speechPeak)
     /** Which microphone input: 0 = for speech recognition, 1 = the plain microphone. */
     var source = 0
 
@@ -106,7 +110,9 @@ class MicGate(
         detach()
         val (read, write) = try { ParcelFileDescriptor.createPipe() } catch (_: Exception) { return null }
         val out = ParcelFileDescriptor.AutoCloseOutputStream(write)
-        try { out.write(preRoll.take()) } catch (_: Exception) { try { out.close() } catch (_: Exception) {}; read.close(); return null }
+        val pre = preRoll.take()
+        SpeechGate.amplify(pre, pre.size, gain)
+        try { out.write(pre) } catch (_: Exception) { try { out.close() } catch (_: Exception) {}; read.close(); return null }
         sinkUntil = SystemClock.elapsedRealtime() + maxMs
         sink = out
         return read
@@ -129,6 +135,7 @@ class MicGate(
             lastFrame = now
             val heard = SpeechGate.level(buf, n)
             peak = maxOf(heard, peak * 0.995)
+            speechPeak = maxOf(heard, speechPeak * 0.999)
             if (heard < 1.0) {                                   // pure digital silence, not a quiet room
                 if (zeroSince < 0) zeroSince = now
                 if (!silenced && now - zeroSince > 4_000) { silenced = true; onSilenced() }
@@ -136,13 +143,17 @@ class MicGate(
             val out = sink
             if (out != null) {
                 if (now > sinkUntil) { detach(); continue }
-                try { out.write(buf, 0, n) } catch (_: Exception) { detach() }   // the recogniser closed its end
+                val loud = buf.copyOf(n)
+                SpeechGate.amplify(loud, n, gain)
+                try { out.write(loud, 0, n) } catch (_: Exception) { detach() }   // the recogniser closed its end
                 continue
             }
             val rec = capture
             if (rec != null) {                         // a sentence is being recorded: until a short silence
-                rec.write(buf, 0, n)
-                val level = SpeechGate.level(buf, n)
+                val level = heard
+                val loud = buf.copyOf(n)
+                SpeechGate.amplify(loud, n, gain)      // a quiet microphone is made loud enough to understand
+                rec.write(loud, 0, n)
                 if (level < gate.threshold() * 0.7) { if (quietSince < 0) quietSince = now } else quietSince = -1L
                 val long = now - captureStart
                 if ((quietSince > 0 && now - quietSince > END_SILENCE_MS && long > 600) || long > MAX_SENTENCE_MS) {
@@ -157,7 +168,11 @@ class MicGate(
             preRoll.add(buf, n)
             if (gate.feed(SpeechGate.level(buf, n), now)) {
                 if (captureMode) {
-                    capture = java.io.ByteArrayOutputStream(RATE * 2 * 4).also { it.write(preRoll.take()) }
+                    capture = java.io.ByteArrayOutputStream(RATE * 2 * 4).also {
+                        val pre = preRoll.take()
+                        SpeechGate.amplify(pre, pre.size, gain)
+                        it.write(pre)
+                    }
                     captureStart = now
                     quietSince = -1L
                 } else onSpeech()

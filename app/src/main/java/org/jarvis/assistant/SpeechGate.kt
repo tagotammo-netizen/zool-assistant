@@ -9,7 +9,7 @@ import kotlin.math.sqrt
  * room's own noise for a moment. Pure logic, tested on the computer.
  */
 class SpeechGate(
-    private val minLevel: Double = 350.0,     // never trigger on anything quieter (16-bit samples, RMS)
+    private val minLevel: Double = 40.0,      // never trigger on anything quieter (16-bit RMS; some phones give speech at ~80)
     private val ratio: Double = 3.0,          // this many times the room's noise
     private val needMs: Long = 140,           // loud for this long = speech, not a click
 ) {
@@ -27,14 +27,14 @@ class SpeechGate(
             if (loudSince < 0) loudSince = t
             val loudFor = t - loudSince
             // loud for many seconds without a break is the room (a fan, a TV), not a person: learn it
-            if (loudFor > STEADY_MS) noise = (noise * 0.98 + level / ratio * 1.1 * 0.02).coerceIn(30.0, 4000.0)
+            if (loudFor > STEADY_MS) noise = (noise * 0.98 + level / ratio * 1.1 * 0.02).coerceIn(8.0, 4000.0)
             if (armed && loudFor >= needMs) { armed = false; return true }
         } else {
             loudSince = -1L
             armed = true
             // follow the room slowly (a fan turning on), faster when it gets quieter
             noise = if (level < noise) noise * 0.9 + level * 0.1 else noise * 0.995 + level * 0.005
-            noise = noise.coerceIn(30.0, 4000.0)
+            noise = noise.coerceIn(8.0, 4000.0)
         }
         return false
     }
@@ -43,6 +43,22 @@ class SpeechGate(
 
     companion object {
         const val STEADY_MS = 4_000L
+
+        /** How much to amplify a quiet microphone so speech reaches a normal level (about 3000 RMS). */
+        fun gainFor(speechPeak: Double) = (3000.0 / maxOf(speechPeak, 60.0)).coerceIn(1.0, 16.0)
+
+        /** Amplify 16-bit little-endian samples in place, without wrapping around (clipped). */
+        fun amplify(pcm: ByteArray, length: Int, gain: Double) {
+            if (gain <= 1.01) return
+            var i = 0
+            while (i + 1 < length) {
+                val v = ((pcm[i + 1].toInt() shl 8) or (pcm[i].toInt() and 0xFF)).toShort().toInt()
+                val a = (v * gain).toInt().coerceIn(-32768, 32767)
+                pcm[i] = (a and 0xFF).toByte()
+                pcm[i + 1] = (a shr 8 and 0xFF).toByte()
+                i += 2
+            }
+        }
 
         /** RMS of 16-bit little-endian samples. */
         fun level(pcm: ByteArray, length: Int): Double {

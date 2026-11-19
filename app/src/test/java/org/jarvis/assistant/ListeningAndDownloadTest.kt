@@ -31,6 +31,20 @@ class ListeningAndDownloadTest {
         assertEquals(1, run(g, 130_000, 131_000, 5000.0))  // a voice over it does
     }
 
+    @Test fun quietMicrophone() {
+        // some phones (Honor) give speech at only ~80 RMS on the recognition input
+        val g = SpeechGate()
+        assertEquals(0, run(g, 0, 30_000, 15.0))
+        assertEquals(1, run(g, 30_000, 31_000, 84.0))
+        assertEquals(16.0, SpeechGate.gainFor(84.0), 0.01)
+        assertEquals(1.0, SpeechGate.gainFor(5000.0), 0.01)
+        val pcm = byteArrayOf(0x64, 0x00, 0x9C.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0x7F)   // 100, -100, 32767
+        SpeechGate.amplify(pcm, pcm.size, 10.0)
+        assertEquals(1000.0, SpeechGate.level(pcm.copyOf(2), 2), 0.01)
+        assertEquals(-1000, ((pcm[3].toInt() shl 8) or (pcm[2].toInt() and 0xFF)).toShort().toInt())
+        assertEquals(32767, ((pcm[5].toInt() shl 8) or (pcm[4].toInt() and 0xFF)).toShort().toInt())   // clipped, not wrapped
+    }
+
     @Test fun loudness() {
         val pcm = ByteArray(4)
         pcm[0] = 0xE8.toByte(); pcm[1] = 0x03        // 1000
