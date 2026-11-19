@@ -416,8 +416,8 @@ class JarvisService : AccessibilityService() {
                 log("محرك الاستماع رافض الطلبات. بجرب محرك التلفون الداخلي.")
                 downloadOfflinePack()
             }
-            others.any { it.packageName.startsWith("com.google.") } -> {
-                val next = others.first { it.packageName.startsWith("com.google.") }
+            others.any { arabicEngine(it) } -> {
+                val next = others.first { arabicEngine(it) }
                 prefs.edit().putString("stt_service", next.flattenToString()).apply()
                 val name = try { packageManager.getApplicationLabel(packageManager.getApplicationInfo(next.packageName, 0)) } catch (_: Exception) { next.packageName }
                 log("محرك الاستماع رافض الطلبات. غيّرتو لمحرك تاني: $name.")
@@ -431,6 +431,9 @@ class JarvisService : AccessibilityService() {
     }
 
     private var triedOnDevice = false
+
+    /** Google's speech engines, except Android System Intelligence (on-device only, no Arabic here). */
+    private fun arabicEngine(c: ComponentName) = c.packageName.startsWith("com.google.") && c.packageName != "com.google.android.as"
     private var langErrors = 0
 
     /** The engine in use, by name ("Google", "Honor"...), for the log and the report. */
@@ -444,7 +447,7 @@ class JarvisService : AccessibilityService() {
 
     /** Google's speech engine, when it is on the phone: it knows Arabic. */
     private fun googleEngine(): ComponentName? = recognitionServices().firstOrNull { it.packageName == "com.google.android.googlequicksearchbox" }
-        ?: recognitionServices().firstOrNull { it.packageName.startsWith("com.google.") }
+        ?: recognitionServices().firstOrNull { it.packageName.startsWith("com.google.") && it.packageName != "com.google.android.as" }
 
     private fun rebuildRecognizer() {
         try { recognizer?.destroy() } catch (_: Exception) {}
@@ -655,9 +658,62 @@ class JarvisService : AccessibilityService() {
      * Gemini writes down the sentence. Gemini's own API (generateContent with the WAV inline), which takes audio
      * for every Gemini model; the OpenAI-compatible address answered 404 for audio. Off the main thread.
      */
-    private fun transcribe(pcm: ByteArray, retried: Boolean = false): String? {
+    // the flash models this key can use, asked from Google once; a busy model is swapped for another for a while
+    @Volatile private var flashModels: List<String>? = null
+    @Volatile private var sttModel: String? = null
+    @Volatile private var sttModelUntil = 0L
+    private var lastCloudLog = 0L
+
+    /** Other Gemini "flash" models that take audio, from Google's own list (names are never guessed). */
+    private fun otherFlashModel(current: String, key: String): String? {
+        val list = flashModels ?: try {
+            val con = URL("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200").openConnection() as HttpURLConnection
+            con.connectTimeout = 8000
+            con.readTimeout = 10000
+            con.setRequestProperty("x-goog-api-key", key)
+            val raw = if (con.responseCode in 200..299) con.inputStream.bufferedReader().use { it.readText() } else ""
+            con.disconnect()
+            val arr = if (raw.isEmpty()) JSONArray() else JSONObject(raw).optJSONArray("models") ?: JSONArray()
+            (0 until arr.length()).map { arr.getJSONObject(it) }
+                .filter { m -> m.optJSONArray("supportedGenerationMethods")?.toString()?.contains("generateContent") == true }
+                .map { it.optString("name").removePrefix("models/") }
+                .filter { n -> "flash" in n && listOf("image", "tts", "live", "audio", "embed", "exp", "preview").none { it in n } }
+                .filter { n -> !n.startsWith("gemini-1") && !n.startsWith("gemini-2") }     // retired for new users
+                .also { flashModels = it }
+        } catch (_: Exception) { emptyList() }
+        return list.filter { it != current }.maxByOrNull { it }      // the newest name sorts last
+    }
+
+    /** Log at most once every half minute, so a busy Gemini does not fill the chat. */
+    private fun cloudLog(text: String) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastCloudLog < 30_000) return
+        lastCloudLog = now
+        main.post { log(text) }
+    }
+
+    /**
+     * Gemini writes down the sentence (Gemini's own generateContent, WAV inline). A model Google retired is replaced
+     * by the one Google names; a busy model (503, timeout, limit reached) by another flash model for ten minutes.
+     * Only lasting errors (a bad key, a refused request) turn Gemini listening off. Off the main thread.
+     */
+    private fun transcribe(pcm: ByteArray, attempt: Int = 0, forced: String? = null): String? {
         val key = prefs.getString("ai_key", "").orEmpty().trim()
-        val model = prefs.getString("ai_model", "").orEmpty().trim().removePrefix("models/").ifEmpty { "gemini-2.5-flash" }
+        val chosen = prefs.getString("ai_model", "").orEmpty().trim().removePrefix("models/").ifEmpty { "gemini-3.8-flash" }
+        val model = forced ?: sttModel?.takeIf { SystemClock.elapsedRealtime() < sttModelUntil } ?: chosen
+        fun busy(why: String): String? {
+            if (attempt < 2) {
+                val alt = otherFlashModel(model, key)
+                if (alt != null) {
+                    sttModel = alt
+                    sttModelUntil = SystemClock.elapsedRealtime() + 10 * 60_000L
+                    cloudLog("Gemini «$model» مزحوم ($why)، استعملت «$alt» مؤقتاً.")
+                    return transcribe(pcm, attempt + 1, alt)
+                }
+            }
+            cloudLog("Gemini مزحوم ($why). بحاول تاني مع الجملة الجاية.")
+            return null
+        }
         return try {
             val audio = android.util.Base64.encodeToString(MicGate.wav(pcm), android.util.Base64.NO_WRAP)
             val body = JSONObject()
@@ -675,7 +731,7 @@ class JarvisService : AccessibilityService() {
             con.requestMethod = "POST"
             con.doOutput = true
             con.connectTimeout = 8000
-            con.readTimeout = 20000
+            con.readTimeout = 15000
             con.setRequestProperty("Content-Type", "application/json")
             con.setRequestProperty("x-goog-api-key", key)
             con.outputStream.use { it.write(body.toString().toByteArray()) }
@@ -685,13 +741,13 @@ class JarvisService : AccessibilityService() {
                 val why = try { con.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty() } catch (_: Exception) { "" }
                 val msg = Regex("\"message\"\\s*:\\s*\"([^\"]{0,160})").find(why)?.groupValues?.get(1) ?: why.take(160)
                 con.disconnect()
-                if (code == 404 && !retried && followModelHint(why)) return transcribe(pcm, true)
+                if (code == 404 && attempt == 0 && followModelHint(why)) return transcribe(pcm, 1)
+                if (code == 429 || code >= 500) return busy(if (code == 429) "وصل حدّو" else "$code")
                 main.post {
                     cloudFailures++
-                    if (code == 429) log("Gemini وصل حدّو في الدقيقة أو اليوم. برجع لاستماع Google.")
-                    else log("Gemini رد بـ $code: $msg")
-                    if (code == 429 || cloudFailures >= 3) {
-                        if (code != 429) log("وقّفت الاستماع عن طريق Gemini بعد 3 أخطاء، برجع لـ Google.")
+                    log("Gemini رد بـ $code: $msg")
+                    if (cloudFailures >= 3) {
+                        log("وقّفت الاستماع عن طريق Gemini بعد 3 أخطاء، برجع لـ Google.")
                         cloudSttUntil = 0L
                         prefs.edit().putBoolean("stt_cloud", false).apply()
                         cloudFailures = 0
@@ -707,8 +763,10 @@ class JarvisService : AccessibilityService() {
                 ?: return ""
             (0 until parts.length()).joinToString(" ") { parts.getJSONObject(it).optString("text") }
                 .replace(Regex("[\"«»]"), "").trim()
+        } catch (e: java.net.SocketTimeoutException) {
+            busy("ما رد في الوقت")
         } catch (e: Exception) {
-            main.post { log("ما قدرت أرسل الصوت لـ Gemini: ${e.message}") }
+            cloudLog("ما قدرت أرسل الصوت لـ Gemini: ${e.message}")
             null
         }
     }
