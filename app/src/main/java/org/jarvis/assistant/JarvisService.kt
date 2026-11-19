@@ -377,6 +377,8 @@ class JarvisService : AccessibilityService() {
     private fun offlineWanted() = prefs.getBoolean("offline", true) && prefs.getBoolean("offline_ready", false) && !forceNormal
 
     /** The phone's own offline recogniser when there is one (Android 13+), otherwise the normal one. */
+    private var enginesLogged = false
+
     private fun ensureRecognizer() {
         if (recognizer != null || useWhisper()) return
         val wantOffline = offlineWanted()
@@ -385,8 +387,18 @@ class JarvisService : AccessibilityService() {
             SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
         } else {
             onDevice = false
+            // nothing chosen: the Google app's engine when the phone has it. The phone's default is often
+            // "Speech Recognition & Synthesis", which answers "too many requests" (error 10) on some phones.
             val chosen = prefs.getString("stt_service", null)?.let { ComponentName.unflattenFromString(it) }
                 ?.takeIf { it in recognitionServices() }
+                ?: recognitionServices().firstOrNull { it.packageName == "com.google.android.googlequicksearchbox" }
+            if (!enginesLogged) {
+                enginesLogged = true
+                val names = recognitionServices().map { c ->
+                    try { packageManager.getApplicationLabel(packageManager.getApplicationInfo(c.packageName, 0)).toString() } catch (_: Exception) { c.packageName }
+                }
+                log("محركات الاستماع في التلفون: " + names.ifEmpty { listOf("ما في") }.joinToString("، "))
+            }
             if (chosen != null) SpeechRecognizer.createSpeechRecognizer(this, chosen) else SpeechRecognizer.createSpeechRecognizer(this)
         }
         r.setRecognitionListener(listener)
@@ -443,9 +455,10 @@ class JarvisService : AccessibilityService() {
 
     /** The engine in use, by name ("Google", "Honor"...), for the log and the report. */
     private fun engineLabel(): String {
-        val c = (prefs.getString("stt_service", null)
-            ?: android.provider.Settings.Secure.getString(contentResolver, "voice_recognition_service"))
-            ?.let { ComponentName.unflattenFromString(it) } ?: return "الأساسي"
+        val c = prefs.getString("stt_service", null)?.let { ComponentName.unflattenFromString(it) }
+            ?: recognitionServices().firstOrNull { it.packageName == "com.google.android.googlequicksearchbox" }
+            ?: android.provider.Settings.Secure.getString(contentResolver, "voice_recognition_service")
+                ?.let { ComponentName.unflattenFromString(it) } ?: return "الأساسي"
         return try { packageManager.getApplicationLabel(packageManager.getApplicationInfo(c.packageName, 0)).toString() }
         catch (_: Exception) { c.packageName }
     }
