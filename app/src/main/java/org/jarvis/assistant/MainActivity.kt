@@ -104,6 +104,7 @@ class MainActivity : AppCompatActivity() {
     private val scanSpeeds = listOf(R.id.scanFast to 1000L, R.id.scanMid to 1500L, R.id.scanSlow to 2500L)
     private val inactives = listOf(R.id.inactOff to 0, R.id.inact4 to 4, R.id.inact8 to 8, R.id.inact12 to 12)
     private var wizard: SetupWizard? = null
+    private var downloads: DownloadUi.Panel? = null
     private val updates by lazy { UpdateManager(this) }
     private val rates = listOf(R.id.rateSlow to 0.85f, R.id.rateMid to 1f, R.id.rateFast to 1.2f)
     private val pitches = listOf(R.id.pitchLow to 0.85f, R.id.pitchMid to 1f, R.id.pitchHigh to 1.15f)
@@ -123,6 +124,7 @@ class MainActivity : AppCompatActivity() {
         prefs.getString("last_crash", null)?.let { showCrash(it); return }
         enableEdgeToEdge(SystemBarStyle.dark(Color.TRANSPARENT), SystemBarStyle.dark(Color.TRANSPARENT))
         setContentView(R.layout.activity_main)
+        downloads = DownloadUi.Panel(this).also { it.attach() }
         drawer = findViewById(R.id.drawer)
         val home = findViewById<View>(R.id.main)
         val panel = findViewById<View>(R.id.settingsPanel)
@@ -788,6 +790,12 @@ class MainActivity : AppCompatActivity() {
         wizard?.refresh()
         updates.resumeIfWaiting()
         if (prefs.getBoolean("auto_update", true) && wizard == null) updates.check(quiet = true)
+    }
+
+    override fun onDestroy() {
+        downloads?.detach()
+        downloads = null
+        super.onDestroy()
     }
 
     override fun onStop() {

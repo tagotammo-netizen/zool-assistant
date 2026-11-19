@@ -75,11 +75,12 @@ class UpdateManager(private val activity: Activity) {
     private fun apkFile() = File(activity.cacheDir, "updates/zol.apk")
 
     private fun download(r: Updates.Release) {
-        toast("بنزّل التحديث… (حوالي 60 ميقا)")
+        val job = Downloads.start("update", "تحديث زول ${r.version}")
         Thread {
             val target = apkFile()
             target.parentFile?.mkdirs()
             val part = File(target.path + ".part")
+            var error: String? = null
             val ok = try {
                 var url = URL(r.apk)
                 var con = url.openConnection() as HttpURLConnection
@@ -92,17 +93,34 @@ class UpdateManager(private val activity: Activity) {
                 }
                 con.connectTimeout = 15_000
                 con.readTimeout = 60_000
-                if (con.responseCode !in 200..299) false else {
-                    con.inputStream.use { input -> part.outputStream().use { input.copyTo(it, 128 * 1024) } }
+                if (con.responseCode !in 200..299) { error = "الخادم رد بـ ${con.responseCode}"; false } else {
+                    job.total = con.contentLengthLong.coerceAtLeast(0)
+                    con.inputStream.use { input -> part.outputStream().use { out -> copy(input, out, job) } }
                     con.disconnect()
-                    part.length() > 1_000_000 && (target.delete() || true) && part.renameTo(target)
+                    if (job.cancelled) false else part.length() > 1_000_000 && (target.delete() || true) && part.renameTo(target)
                 }
-            } catch (_: Exception) { part.delete(); false }
+            } catch (e: Exception) { error = e.message; false }
+            if (!ok) part.delete()
+            Downloads.finish(job, when { ok -> Downloads.State.DONE; job.cancelled -> Downloads.State.CANCELLED; else -> Downloads.State.FAILED }, error)
             main.post {
                 if (activity.isFinishing) return@post
-                if (ok) install() else toast("التنزيل ما كمل. جرّب تاني لما النت يكون أحسن.")
+                if (ok) install() else if (!job.cancelled) toast("التنزيل ما كمل. جرّب تاني لما النت يكون أحسن.")
             }
         }.start()
+    }
+
+    companion object {
+        /** Copy while counting, stopping when the person cancels. */
+        fun copy(input: java.io.InputStream, out: java.io.OutputStream, job: Downloads.Job) {
+            val buf = ByteArray(64 * 1024)
+            while (!job.cancelled) {
+                val n = input.read(buf)
+                if (n < 0) break
+                out.write(buf, 0, n)
+                job.done += n
+                Downloads.changed(job)
+            }
+        }
     }
 
     /** Hand the APK to Android. The first time, Android asks to allow Zol to install apps. */

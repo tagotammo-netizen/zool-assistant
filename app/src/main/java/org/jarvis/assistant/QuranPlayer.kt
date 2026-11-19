@@ -174,10 +174,18 @@ class QuranPlayer(private val context: Context, private val onEvent: (Event) -> 
          */
         fun download(context: Context, surahs: List<Int>, reciterId: String, finished: (saved: Int, failed: Int) -> Unit) {
             val main = Handler(Looper.getMainLooper())
+            val job = Downloads.start("quran-$reciterId",
+                if (surahs.size == 1) "تنزيل ${Quran.title(surahs[0])}" else "تنزيل ${surahs.size} سورة")
+            job.items = surahs.size
             Thread {
                 var saved = 0
                 var failed = 0
-                for (n in surahs) {
+                for ((i, n) in surahs.withIndex()) {
+                    if (job.cancelled) break
+                    job.item = i + 1
+                    job.done = 0
+                    job.total = 0
+                    Downloads.changed(job)
                     val target = file(context, n, reciterId)
                     if (target.length() > 0) { saved++; continue }
                     target.parentFile?.mkdirs()
@@ -187,14 +195,20 @@ class QuranPlayer(private val context: Context, private val onEvent: (Event) -> 
                         con.connectTimeout = 15_000
                         con.readTimeout = 30_000
                         if (con.responseCode !in 200..299) { failed++; con.disconnect(); continue }
-                        con.inputStream.use { input -> part.outputStream().use { input.copyTo(it, 64 * 1024) } }
+                        job.total = con.contentLengthLong.coerceAtLeast(0)
+                        con.inputStream.use { input -> part.outputStream().use { UpdateManager.copy(input, it, job) } }
                         con.disconnect()
-                        if (part.length() > 10_000 && part.renameTo(target)) saved++ else { part.delete(); failed++ }
+                        if (!job.cancelled && part.length() > 10_000 && part.renameTo(target)) saved++ else { part.delete(); if (!job.cancelled) failed++ }
                     } catch (e: Exception) {
                         part.delete()
                         failed++
                     }
                 }
+                Downloads.finish(job, when {
+                    job.cancelled -> Downloads.State.CANCELLED
+                    failed > 0 && saved == 0 -> Downloads.State.FAILED
+                    else -> Downloads.State.DONE
+                }, if (failed > 0) "$failed ما نزلت" else null)
                 main.post { finished(saved, failed) }
             }.start()
         }

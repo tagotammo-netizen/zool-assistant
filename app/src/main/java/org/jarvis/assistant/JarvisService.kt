@@ -281,7 +281,9 @@ class JarvisService : AccessibilityService() {
         board?.hide()
         board = null
         hideBubble()
-        try { recognizer?.cancel() } catch (_: Exception) {}
+        cancelRecognition()
+        ear?.stop()
+        ear = null
         instance = null
     }
 
@@ -314,7 +316,8 @@ class JarvisService : AccessibilityService() {
         listening = false
         main.removeCallbacksAndMessages(null)
         whisper.cancel()
-        try { recognizer?.cancel() } catch (_: Exception) {}
+        cancelRecognition()
+        ear?.stop()
         updateForeground(false)
         paintBubble(false)
         log("توقف الاستماع.")
@@ -456,7 +459,12 @@ class JarvisService : AccessibilityService() {
                 if (!listening && !ecoPaused && prefs.getBoolean("auto_listen", false) && !blocked && granted(Manifest.permission.RECORD_AUDIO)) {
                     log("أعدت تشغيل الاستماع.")
                     startListening(false)
-                } else if (listening && lastActivity > 0 && now - lastActivity > 40_000 && tts?.isSpeaking != true) {
+                } else if (listening && ear?.active == true && now - ear!!.lastFrame > 10_000) {
+                    log("المايك وقف، بشغّلو تاني.")         // the phone took the microphone away (a call, another app)
+                    ear?.stop()
+                    listenOnce()
+                } else if (listening && ear?.active != true && now >= noStartBefore && lastActivity > 0 &&
+                    now - lastActivity > 40_000 && tts?.isSpeaking != true) {
                     log("الاستماع تعطّل، أعيد تشغيله.")
                     rebuildRecognizer()
                     ensureRecognizer()
@@ -472,8 +480,11 @@ class JarvisService : AccessibilityService() {
     private fun listenOnce() {
         if (!listening) return
         lastActivity = SystemClock.elapsedRealtime()
-        if (tts?.isSpeaking == true) { resume(500); return }      // do not listen to my own voice
-        if (useWhisper()) { whisperListen(); return }
+        if (tts?.isSpeaking == true || clipPlayer != null) { ear?.muted = true; resume(500); return }   // not my own voice
+        if (useWhisper()) { ear?.stop(); whisperListen(); return }
+        if (useGate()) { gateListen(); return }
+        val wait = noStartBefore - SystemClock.elapsedRealtime()
+        if (wait > 0) { resume(wait); return }
         ensureRecognizer()
         val intent = recognizerIntent()
         try {
@@ -482,6 +493,88 @@ class JarvisService : AccessibilityService() {
             log("خطأ في الاستماع: ${e.message}")
             resume(1500)
         }
+    }
+
+    // ------------------------------------------------------------------ Zol's own ear (Android 13+)
+
+    private var ear: MicGate? = null
+    private var gateActive = false              // a sentence is going to the recogniser through the pipe
+    private var gatePipe: android.os.ParcelFileDescriptor? = null
+    private var gateFailed = false              // this recogniser does not take sound from a pipe
+    private var gateWorked = false
+    private var gateErrors = 0
+    private var noStartBefore = 0L              // waiting after "too many requests"
+
+    private fun useGate() = Build.VERSION.SDK_INT >= 33 && !gateFailed && prefs.getBoolean("gate_on", true)
+
+    /** Listen with Zol's own ear; the recogniser is asked only when someone talks. */
+    private fun gateListen() {
+        val e = ear ?: MicGate { main.post { gateSession() } }.also { ear = it }
+        if (!e.active && !e.start()) {
+            gateFailed = true
+            log("ما قدرت أفتح المايك بطريقتي، رجعت للطريقة العادية.")
+            ear = null
+            listenOnce()
+            return
+        }
+        e.muted = false
+        lastActivity = SystemClock.elapsedRealtime()
+    }
+
+    /** Someone started talking: one request, fed with the sound from the ear (and the moment before). */
+    private fun gateSession() {
+        val e = ear ?: return
+        if (!listening || gateActive || tts?.isSpeaking == true || clipPlayer != null) return
+        if (SystemClock.elapsedRealtime() < noStartBefore) return
+        ensureRecognizer()
+        val pipe = e.openPipe() ?: return
+        val intent = recognizerIntent().apply {
+            putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, pipe)
+            putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
+            putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, android.media.AudioFormat.ENCODING_PCM_16BIT)
+            putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, MicGate.RATE)
+        }
+        gateActive = true
+        gatePipe = pipe
+        lastActivity = SystemClock.elapsedRealtime()
+        try {
+            recognizer?.startListening(intent)
+        } catch (ex: Exception) {
+            endGateSession()
+            if (gateTrouble()) return
+        }
+        main.removeCallbacks(gateTimeout)
+        main.postDelayed(gateTimeout, 15_000)
+    }
+
+    private val gateTimeout = Runnable { if (gateActive) { cancelRecognition(); resume(200) } }
+
+    private fun endGateSession() {
+        if (!gateActive) return
+        gateActive = false
+        main.removeCallbacks(gateTimeout)
+        ear?.detach()
+        gatePipe?.let { try { it.close() } catch (_: Exception) {} }
+        gatePipe = null
+    }
+
+    /** True when the ear was given up for this phone (the recogniser refuses sound from a pipe). */
+    private fun gateTrouble(): Boolean {
+        if (gateWorked) return false
+        gateErrors++
+        if (gateErrors < 3) return false
+        gateFailed = true
+        ear?.stop()
+        ear = null
+        log("محرك الاستماع في التلفون ده ما بيقبل الصوت من زول مباشرة، رجعت للطريقة العادية (مع انتظار أطول في السكوت).")
+        rebuildRecognizer()
+        resume(1500)
+        return true
+    }
+
+    private fun cancelRecognition() {
+        endGateSession()
+        try { recognizer?.cancel() } catch (_: Exception) {}
     }
 
     private val whisper by lazy { WhisperEngine(this) }
@@ -575,7 +668,7 @@ class JarvisService : AccessibilityService() {
             if (mode() == "night" && !urgent) return@post
             arabic = Commands.isArabic(text)
             whisper.cancel()
-            try { recognizer?.cancel() } catch (_: Exception) {}
+            cancelRecognition()
             if (openWindow && listening) {
                 awakeUntil = SystemClock.elapsedRealtime() + 20_000
                 paintBubble(false)
@@ -781,7 +874,7 @@ class JarvisService : AccessibilityService() {
             return
         }
         whisper.cancel()
-        try { recognizer?.cancel() } catch (_: Exception) {}
+        cancelRecognition()
         val chunk = readQueue[readPos++]
         arabic = Commands.isArabic(chunk)
         say(chunk)
@@ -1397,16 +1490,21 @@ class JarvisService : AccessibilityService() {
         override fun onBeginningOfSpeech() { lastActivity = SystemClock.elapsedRealtime() }
         override fun onRmsChanged(rmsdB: Float) {}
         override fun onBufferReceived(buffer: ByteArray?) {}
-        override fun onEndOfSpeech() {}
+        override fun onEndOfSpeech() { if (gateActive) ear?.detach() }
         override fun onPartialResults(partialResults: Bundle?) {}
         override fun onEvent(eventType: Int, params: Bundle?) {}
 
         override fun onError(error: Int) {
+            val wasGate = gateActive
+            endGateSession()
             noteError(error)
+            if (wasGate && error !in listOf(6, 7, 8, 10) && gateTrouble()) return
             if (error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT ||
                 error == SpeechRecognizer.ERROR_SERVER) { if (netTrouble()) return }
             when (error) {
-                SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> resume(300)   // silence: normal
+                // silence: normal. Without the ear, ask less often the longer it stays quiet
+                SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
+                    resume(if (gateActive || ear?.active == true) 200 else minOf(4_000L, 300L shl minOf(silent / 4, 4)))
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
                     log("النظام رفض استخدام الميكروفون (خطأ 9). افتح التطبيق واضغط زر الميكروفون.")
                     blocked = true
@@ -1418,7 +1516,10 @@ class JarvisService : AccessibilityService() {
                     busyErrors++
                     rebuildRecognizer()
                     if (busyErrors == 4 || busyErrors == 10 || busyErrors == 18) switchRecognizer()
-                    resume(minOf(60_000L, 3_000L shl minOf(busyErrors - 1, 5)))
+                    val wait = minOf(60_000L, 3_000L shl minOf(busyErrors - 1, 5))
+                    noStartBefore = SystemClock.elapsedRealtime() + wait
+                    ear?.quietUntil = noStartBefore
+                    resume(wait)
                 }
                 12, 13 -> {                       // language not supported / not downloaded: go back to the normal recogniser
                     if (!forceNormal || onDevice) log("حزمة الصوت العربية غير موجودة على الهاتف، أستخدم الاستماع العادي (يحتاج إنترنت).")
@@ -1429,7 +1530,7 @@ class JarvisService : AccessibilityService() {
                 }
                 else -> {
                     errors++
-                    try { recognizer?.cancel() } catch (_: Exception) {}
+                    cancelRecognition()
                     if (onDevice && errors >= 3) {                // the offline engine does not work here: use the normal one
                         forceNormal = true
                         log("المحرك دون إنترنت لا يعمل في هذا الهاتف، أستخدم الاستماع العادي.")
@@ -1441,6 +1542,8 @@ class JarvisService : AccessibilityService() {
         }
 
         override fun onResults(results: Bundle?) {
+            if (gateActive && !results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).isNullOrEmpty()) gateWorked = true
+            endGateSession()
             errors = 0; silent = 0; lastErr = -1
             lastActivity = SystemClock.elapsedRealtime()
             processResults(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: arrayListOf())
@@ -2521,7 +2624,7 @@ class JarvisService : AccessibilityService() {
             if (arabicVoice == false)
                 log("صوت العربية غير منزّل، لذلك تظهر الردود كتابة فقط. نزّله من الإعدادات ← حالة النظام ← صوت النطق.")
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) { lastActivity = SystemClock.elapsedRealtime() }
+                override fun onStart(utteranceId: String?) { lastActivity = SystemClock.elapsedRealtime(); ear?.muted = true }
                 override fun onDone(utteranceId: String?) {
                     resume(300); if (reading) scheduleReadAdvance()
                     main.post { if (tts?.isSpeaking != true) quran?.duck(false) }
@@ -2591,6 +2694,7 @@ class JarvisService : AccessibilityService() {
             mp.prepare()
             if (quran?.playing == true) quran?.duck(true)
             lastActivity = SystemClock.elapsedRealtime()
+            ear?.muted = true
             mp.start()
             clipPlayer = mp
             true

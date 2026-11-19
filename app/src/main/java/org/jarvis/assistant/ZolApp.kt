@@ -11,6 +11,7 @@ import java.io.StringWriter
 class ZolApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        DownloadUi.attach(this)
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
             try {

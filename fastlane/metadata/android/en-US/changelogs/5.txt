@@ -1,0 +1,1 @@
+Zol 1.4: listens with its own on-phone ear and asks the recogniser only when someone speaks (fixes 'too many requests'); progress bar, speed, time left and cancel for every download.
