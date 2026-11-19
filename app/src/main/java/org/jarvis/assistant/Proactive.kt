@@ -85,6 +85,7 @@ class ProactiveReceiver : BroadcastReceiver() {
         private const val CODE_NEXT = 7001
         private const val CODE_AGAIN = 7002
         private const val CODE_PRAYER = 7003
+        private const val CODE_AZKAR = 7004
 
         /** Where prayer times are worked out: the city chosen in settings, the phone's saved location, or Khartoum. */
         fun prayerPlace(context: Context): PrayerTimes.City {
@@ -122,6 +123,32 @@ class ProactiveReceiver : BroadcastReceiver() {
             }
         }
 
+        /** Morning adhkar half an hour after sunrise, evening adhkar half an hour after Asr, when switched on. */
+        fun scheduleAzkar(context: Context) {
+            val prefs = context.getSharedPreferences("jarvis", Context.MODE_PRIVATE)
+            val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            am.cancel(intent(context, "azkar", "", 1, CODE_AZKAR))
+            if (!prefs.getBoolean("azkar_alert", false)) return
+            val place = prayerPlace(context)
+            val now = Calendar.getInstance()
+            for (day in 0..1) {
+                val cal = (now.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, day) }
+                val times = PrayerTimes.forDay(cal, place.lat, place.lon)
+                val plan = listOf(times.getValue(PrayerTimes.Prayer.SUNRISE) + 30 to "morning",
+                    times.getValue(PrayerTimes.Prayer.ASR) + 30 to "evening")
+                for ((m, kind) in plan) {
+                    val at = (cal.clone() as Calendar).apply {
+                        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+                        add(Calendar.MINUTE, m)
+                    }.timeInMillis
+                    if (at > now.timeInMillis + 30_000) {
+                        setAlarm(context, at, intent(context, "azkar", kind, 1, CODE_AZKAR))
+                        return
+                    }
+                }
+            }
+        }
+
         private fun intent(context: Context, kind: String, text: String, attempt: Int, code: Int): PendingIntent =
             PendingIntent.getBroadcast(context, code,
                 Intent(context, ProactiveReceiver::class.java)
@@ -143,6 +170,7 @@ class ProactiveReceiver : BroadcastReceiver() {
         /** Set the alarm for the earliest coming reminder or bedtime. Call after any change and after each firing. */
         fun schedule(context: Context) {
             schedulePrayer(context)
+            scheduleAzkar(context)
             val prefs = context.getSharedPreferences("jarvis", Context.MODE_PRIVATE)
             val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
             val pi0 = intent(context, "", "", 1, CODE_NEXT)

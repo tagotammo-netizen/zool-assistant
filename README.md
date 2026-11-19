@@ -17,6 +17,8 @@ Phone and PC, no subscriptions, most features work offline.
 - التحكم بالبيت الذكي عبر ESP32 (تشغيل، حالة الجهاز، تنبيهات صوتية).
 - أوضاع (سيارة، ليل)، كلمة سر صوتية للأوامر الحساسة، إبلاغ المرافق مع الموقع.
 - يتعلم من أخطائه: جمل غير مفهومة تُعلَّم مرة واحدة، وتدريب على صوتك.
+- التحكم بالرأس عبر الكاميرا الأمامية، مع كيبورد عربي كبير يُكتب بالراس واقتراحات كلمات تتعلّم من كتابتك.
+- مواقيت الصلاة بدون إنترنت، تلاوة القرآن (العفاسي، عبد الباسط، نورين محمد صديق)، أذكار الصباح والمسا، واتجاه القبلة بالبوصلة.
 - Hands-free control of any app, calling, messaging, reading the screen, dictation, reminders, smart-home control, a caregiver alert, and local learning of your own phrases.
 
 ## التثبيت | Install

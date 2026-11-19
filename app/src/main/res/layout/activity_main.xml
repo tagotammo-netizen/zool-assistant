@@ -1217,8 +1217,61 @@
                         android:text="عكس الاتجاه الأفقي" />
 
                     <TextView
+                        style="@style/JLabel"
+                        android:text="الكتابة بالراس" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchHeadKb"
+                        style="@style/JSwitch"
+                        android:text="افتح كيبورد الراس لما أختار خانة كتابة" />
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="مدة التثبيت على الحرف" />
+
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/kbDwellGroup"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        app:selectionRequired="true"
+                        app:singleSelection="true">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/kbFast"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="0.6 ث" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/kbMid"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="0.9 ث" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/kbSlow"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="1.3 ث" />
+
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+                    <TextView
                         style="@style/JNote"
-                        android:text="بالصوت: «شغّل التحكم بالرأس» • «وسّط المؤشر» • «اضغط هنا» • «وقّف التحكم بالرأس». إذا رفض أندرويد التشغيل بالصوت، ابدأه من هذا الزر." />
+                        android:text="بالصوت: «شغّل التحكم بالرأس» • «وسّط المؤشر» • «اضغط هنا» • «اكتب بالراس» • «وقّف التحكم بالرأس». الكيبورد بيطلع في النص البعيد من خانة الكتابة، وفيه اقتراحات كلمات بتتعلّم من كتابتك. إذا رفض أندرويد التشغيل بالصوت، ابدأه من هذا الزر." />
                 </LinearLayout>
 
                 <View style="@style/JDivider" />
@@ -1309,6 +1362,100 @@
                     <TextView
                         style="@style/JNote"
                         android:text="الحساب داخل الهاتف بدون إنترنت، بطريقة الهيئة المصرية العامة للمساحة المستعملة في السودان. بالصوت: «متين المغرب؟»، «الصلاة الجاية»، «مواقيت الصلاة»، «ذكرني بالدوا بعد العشا»." />
+                </LinearLayout>
+
+                <View style="@style/JDivider" />
+
+                <!-- Quran and adhkar -->
+                <TextView
+                    android:id="@+id/secQuran"
+                    style="@style/JSection"
+                    android:drawableStart="@drawable/ic_book"
+                    android:text="القرآن والأذكار" />
+
+                <LinearLayout style="@style/JSectionBody">
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:layout_marginTop="0dp"
+                        android:text="القارئ" />
+
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/reciterGroup"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        app:selectionRequired="true"
+                        app:singleSelection="true">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/reciterAfs"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="العفاسي" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/reciterBasit"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="عبد الباسط" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/reciterNourin"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="نورين" />
+
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchQuranContinue"
+                        style="@style/JSwitch"
+                        android:layout_marginTop="8dp"
+                        android:text="واصل بالسورة البعدها" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchAzkar"
+                        style="@style/JSwitch"
+                        android:text="ذكّرني بأذكار الصباح والمسا" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:orientation="horizontal">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnAzkarMorning"
+                            style="@style/JTonal"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:layout_marginEnd="6dp"
+                            android:text="أذكار الصباح" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnAzkarEvening"
+                            style="@style/JTonal"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:text="أذكار المسا" />
+                    </LinearLayout>
+
+                    <TextView
+                        style="@style/JNote"
+                        android:text="التلاوة من الإنترنت (mp3quran). الشيخ نورين محمد صديق برواية الدوري؛ لو السورة ما عندو، بتشتغل بصوت العفاسي. بالصوت: «شغّل سورة الكهف» • «سورة يس بصوت عبد الباسط» • «شغّل المعوذات» • «السورة الجاية» • «وقّف القرآن» • «أذكار الصباح» • «وين القبلة؟». التذكير بالأذكار بعد الشروق بنص ساعة وبعد العصر بنص ساعة." />
                 </LinearLayout>
 
                 <View style="@style/JDivider" />

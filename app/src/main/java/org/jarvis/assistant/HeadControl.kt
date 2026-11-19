@@ -40,6 +40,7 @@ class HeadControl(
     private val onLongPress: (Float, Float) -> Unit,
     private val onAction: (Action, Float, Float) -> Unit,
     private val onStatus: (String) -> Unit,
+    private val onKey: (HeadKeys.Key) -> Unit = {},
 ) : LifecycleOwner {
 
     /** Dock buttons. [x], [y] passed with an action are the last point aimed at outside the dock. */
@@ -67,6 +68,12 @@ class HeadControl(
     private var lastX = -1f
     private var lastY = -1f
 
+    // the head keyboard: shown over the half of the screen away from the text field
+    private var dwellWanted = true
+    private val keyDwell = KeyDwell()
+    var keyboardShown = false
+        private set
+
     var running = false
         private set
 
@@ -76,6 +83,8 @@ class HeadControl(
         running = true
         paused = false; longNext = false
         dockSide = dock
+        dwellWanted = dwellOn
+        keyboardShown = false
         val dm = context.resources.displayMetrics
         tracker = HeadTracker(dm.widthPixels, dm.heightPixels, dm.density).also {
             it.speed = speed; it.dwellMs = dwellMs; it.dwellOn = dwellOn; it.blinkTap = blinkTap
@@ -130,6 +139,33 @@ class HeadControl(
 
     fun recenter() { tracker?.recenter() }
 
+    /** Show the keyboard at the top or bottom of the screen; [dwellMs]: how long the ring stays on a key to type it. */
+    fun showKeyboard(atTop: Boolean, dwellMs: Long) {
+        keyDwell.dwellMs = dwellMs
+        keyDwell.reset()
+        keyboardShown = true
+        cursor?.keyboard(CursorView.Keys(atTop, false, "", emptyList()))
+    }
+
+    /** What the text field holds, and the word suggestions. */
+    fun keyboardText(text: String, suggestions: List<String>) {
+        val k = cursor?.keys ?: return
+        cursor?.keyboard(k.copy(preview = text, suggestions = suggestions))
+    }
+
+    fun keyboardNumbers(toggle: Boolean = true) {
+        val k = cursor?.keys ?: return
+        keyDwell.reset()
+        cursor?.keyboard(k.copy(numbers = if (toggle) !k.numbers else false))
+    }
+
+    fun hideKeyboard() {
+        keyboardShown = false
+        keyDwell.reset()
+        tracker?.dwellOn = dwellWanted
+        cursor?.keyboard(null)
+    }
+
     /** Pause or resume tapping by dwell (the pointer still moves, and the pause button still works). */
     fun setPaused(on: Boolean) {
         paused = on
@@ -163,6 +199,7 @@ class HeadControl(
     private fun show(frame: HeadTracker.Frame) {
         if (!running) return
         val view = cursor
+        if (keyboardShown && view != null && typeOnKeyboard(view, frame)) return
         val action = view?.actionAt(frame.x, frame.y)
         if (action == null) { lastX = frame.x; lastY = frame.y }
         val shownProgress = if (paused && action == null) 0f else frame.progress
@@ -184,6 +221,27 @@ class HeadControl(
         } else {
             onTap(frame.x, frame.y)
         }
+    }
+
+    /** True when the ring is over the keyboard: the frame is used there and nothing else is pressed. */
+    private fun typeOnKeyboard(view: CursorView, frame: HeadTracker.Frame): Boolean {
+        val inside = view.inKeyboard(frame.x, frame.y)
+        // the tracker's own dwell would tap the app under the keyboard: keys are typed by [keyDwell] instead
+        tracker?.dwellOn = dwellWanted && !inside
+        if (!inside) { keyDwell.reset(); view.hoverKey(-1); return false }
+        val index = view.keyAt(frame.x, frame.y)
+        val key = view.keyOf(index)
+        val usable = key != null && (key.kind != HeadKeys.Kind.SUGGEST || key.value.isNotEmpty())
+        val (progress, typed) = if (dwellWanted && usable)
+            keyDwell.update(index, SystemClock.elapsedRealtime(), key?.kind == HeadKeys.Kind.DELETE) else 0f to false
+        view.hoverKey(if (usable) index else -1)
+        view.update(frame.x, frame.y, progress, frame.face, null)
+        if ((typed || frame.tap) && usable && key != null) {
+            if (frame.tap) keyDwell.reset()
+            view.flash()
+            onKey(key)
+        }
+        return true
     }
 
     private fun press(action: Action) {
@@ -215,6 +273,20 @@ class HeadControl(
      * amber while paused, purple when the next tap is a long press.
      */
     private class CursorView(context: Context, private val side: String) : View(context) {
+        /** The keyboard on screen: where, which set of keys, the field's text and the suggestions. */
+        data class Keys(val atTop: Boolean, val numbers: Boolean, val preview: String, val suggestions: List<String>)
+
+        var keys: Keys? = null
+            private set
+        private var keyBoxes: List<Pair<HeadKeys.Key, HeadKeys.Box>> = emptyList()
+        private val kbArea = RectF()
+        private var hovered = -1
+        private val kbPanel = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xF20A1426.toInt() }
+        private val keyBg = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val keyText = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textAlign = Paint.Align.CENTER }
+        private val previewText = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFE3F2FD.toInt(); textAlign = Paint.Align.RIGHT }
+        private val kbRect = RectF()
+
         private val d = context.resources.displayMetrics.density
         private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 4 * d }
         private val halo = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 8 * d; color = 0x66000000 }
@@ -235,7 +307,35 @@ class HeadControl(
         private var longNext = false
         private var flashUntil = 0L
 
+        fun keyboard(k: Keys?) {
+            keys = k
+            hovered = -1
+            layoutKeys()
+            invalidate()
+        }
+
+        fun inKeyboard(x: Float, y: Float) = keys != null && kbArea.contains(x, y)
+
+        fun keyAt(x: Float, y: Float) = keyBoxes.indexOfFirst { it.second.contains(x, y) }
+
+        fun keyOf(index: Int) = keyBoxes.getOrNull(index)?.first
+
+        fun hoverKey(index: Int) { if (index != hovered) { hovered = index; invalidate() } }
+
+        private fun layoutKeys() {
+            val k = keys
+            if (k == null || width == 0) { keyBoxes = emptyList(); kbArea.setEmpty(); return }
+            val rows = HeadKeys.rows(k.numbers, k.suggestions)
+            val preview = 40 * d
+            val rowH = minOf(58 * d, (height * 0.52f - preview) / rows.size)
+            val total = HeadKeys.height(rows.size, rowH, preview)
+            val top = if (k.atTop) 26 * d else height - total - 26 * d
+            kbArea.set(0f, top, width.toFloat(), top + total)
+            keyBoxes = HeadKeys.layout(rows, width.toFloat(), top, rowH, preview)
+        }
+
         override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+            layoutKeys()
             cells.clear()
             if (side == "off") return
             val size = 56 * d
@@ -252,6 +352,7 @@ class HeadControl(
 
         /** The dock button under the pointer, made a little larger than drawn so it is easy to hold. */
         fun actionAt(x: Float, y: Float): Action? {
+            if (keys != null) return null                     // the dock is hidden while typing
             val slack = 6 * d
             return cells.firstOrNull { (_, r) -> x >= r.left - slack && x <= r.right + slack && y >= r.top - slack && y <= r.bottom + slack }?.first
         }
@@ -265,8 +366,40 @@ class HeadControl(
 
         fun flash() { flashUntil = SystemClock.elapsedRealtime() + 250; invalidate() }
 
+        private fun drawKeyboard(canvas: Canvas, k: Keys) {
+            canvas.drawRoundRect(kbArea, 20 * d, 20 * d, kbPanel)
+            // the field's text, its end visible (Arabic runs right to left)
+            previewText.textSize = 17 * d
+            val room = kbArea.width() - 32 * d
+            var shown = k.preview.replace('\n', ' ')
+            if (previewText.measureText(shown) > room) {
+                while (shown.isNotEmpty() && previewText.measureText("…$shown") > room) shown = shown.drop(1)
+                shown = "…$shown"
+            }
+            canvas.drawText(if (shown.isEmpty()) "اكتب هنا…" else "$shown|", kbArea.right - 16 * d, kbArea.top + 27 * d, previewText)
+            for ((i, pair) in keyBoxes.withIndex()) {
+                val (key, b) = pair
+                kbRect.set(b.left + 3 * d, b.top + 3 * d, b.right - 3 * d, b.bottom - 3 * d)
+                keyBg.color = when {
+                    i == hovered -> 0xFF1E88E5.toInt()
+                    key.kind == HeadKeys.Kind.SUGGEST -> if (key.value.isEmpty()) 0x14FFFFFF else 0x4426A69A
+                    key.kind == HeadKeys.Kind.CHAR -> 0x33FFFFFF
+                    key.kind == HeadKeys.Kind.ENTER -> 0xFF2E7D32.toInt()
+                    key.kind == HeadKeys.Kind.CLOSE -> 0x55E53935
+                    else -> 0x22FFFFFF
+                }
+                canvas.drawRoundRect(kbRect, 12 * d, 12 * d, keyBg)
+                keyText.textSize = if (key.kind == HeadKeys.Kind.CHAR) 23 * d else 15 * d
+                val label = key.label
+                if (label.isEmpty()) continue
+                val y = kbRect.centerY() - (keyText.descent() + keyText.ascent()) / 2
+                canvas.drawText(label, kbRect.centerX(), y, keyText)
+            }
+        }
+
         override fun onDraw(canvas: Canvas) {
-            if (cells.isNotEmpty()) {
+            keys?.let { drawKeyboard(canvas, it) }
+            if (cells.isNotEmpty() && keys == null) {
                 val first = cells.first().second
                 val last = cells.last().second
                 box.set(first.left - 4 * d, first.top - 4 * d, first.right + 4 * d, last.bottom + 4 * d)

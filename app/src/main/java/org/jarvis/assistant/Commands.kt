@@ -62,6 +62,11 @@ sealed class Cmd {
     object ListReminders : Cmd()
     data class DeleteReminder(val name: String) : Cmd()
     data class PrayerTime(val prayer: String?) : Cmd()       // null: the next one; "all": today's list; else "MAGHRIB"…
+    data class Quran(val surahs: List<Int>, val reciter: String?) : Cmd()   // empty: carry on from the last surah
+    data class QuranCtl(val what: String) : Cmd()                // stop, resume, next, prev
+    data class Azkar(val kind: String?) : Cmd()                  // morning, evening, sleep; null: by the time of day
+    object Qibla : Cmd()
+    data class HeadKeyboard(val show: Boolean) : Cmd()           // the keyboard typed with the head pointer
     object Train : Cmd()                                     // "دربني": voice training of the person's own dialect
     data class Teach(val phrase: String, val meaning: String) : Cmd()   // "لما اقول X يعني Y"
     object Hush : Cmd()                                      // "اسكت": stop talking / reading
@@ -604,6 +609,7 @@ object Commands {
         if (t in HUSH) return Cmd.Hush
         if (t == "هنا" || t == "here") return Cmd.GridHere
         modeOf(t)?.let { return Cmd.Mode(it) }
+        devotional(t)?.let { return it }
         rest(w, "نفذ لي", "نفذ", "كلفك", "agent", "do this", "carry out")?.let { return Cmd.Agent(it) }
         rest(w, "لخص", "لخصي", "summarize", "summarise")?.let { return Cmd.AskScreen("لخص " + it) }
         rest(w, "اسال", "سؤال", "ask")?.let { return Cmd.AskScreen(it) }
@@ -697,6 +703,36 @@ object Commands {
             if (name.isNotEmpty()) return Cmd.OpenApp(name)
         }
         return nearest(t, w.size)
+    }
+
+    /**
+     * Quran, adhkar, the qibla and the head keyboard. Checked early: "اكتب بالراس" is not dictation,
+     * and "اقرا سورة الملك" is not reading the screen.
+     */
+    private fun devotional(t: String): Cmd? {
+        if (has(t, "ذكرني", "ذكريني", "نبهني", "صحيني", "remind")) return null
+        if (has(t, "اكتب بالراس", "اكتب براسي", "الكتابه بالراس", "كيبورد الراس", "لوحه المفاتيح", "الكيبورد", "كيبورد",
+                "الكي بورد", "keyboard"))
+            return Cmd.HeadKeyboard(!has(t, "اقفل", "قفل", "اخفي", "اخف", "شيل", "سكر", "ابعد", "وقف", "hide", "close"))
+        if (has(t, "القبله", "qibla") || (has(t, "قبله") && has(t, "وين", "اتجاه", "وريني", "ناحيه", "جهه")))
+            return Cmd.Qibla
+        if (has(t, "اذكار", "الاذكار", "ازكار", "الازكار", "اذكاري", "adhkar", "azkar"))
+            return Cmd.Azkar(when {
+                has(t, "الصباح", "صباح", "الصبح", "morning") -> "morning"
+                has(t, "المسا", "مسا", "المساء", "مساء", "العصر", "المغرب", "evening") -> "evening"
+                has(t, "النوم", "نوم", "sleep") -> "sleep"
+                else -> null
+            })
+        val quranWord = has(t, "القران", "قران", "التلاوه", "تلاوه", "السوره", "quran")
+        if (quranWord && has(t, "وقف", "اوقف", "اقفل", "قفل", "اسكت", "طفي", "بطل", "stop")) return Cmd.QuranCtl("stop")
+        if (has(t, "السوره الجايه", "السوره البعدها", "السوره التاليه", "السوره البعدها", "next surah")) return Cmd.QuranCtl("next")
+        if (has(t, "السوره القبلها", "السوره السابقه", "السوره الفاتت", "previous surah")) return Cmd.QuranCtl("prev")
+        if (quranWord && has(t, "كمل", "واصل", "رجع", "ارجع", "resume", "continue")) return Cmd.QuranCtl("resume")
+        val surahs = Quran.surahsIn(t)
+        if (surahs.isNotEmpty()) return Cmd.Quran(surahs, Quran.reciterOf(t))
+        if (quranWord && has(t, "شغل", "سمعني", "اسمع", "قرا", "اقرا", "اتلو", "play"))
+            return Cmd.Quran(emptyList(), Quran.reciterOf(t))
+        return null
     }
 
     private fun modeOf(t: String): String? = when {

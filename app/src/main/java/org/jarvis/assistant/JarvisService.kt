@@ -14,6 +14,11 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.Canvas
+import android.hardware.GeomagneticField
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.location.LocationManager
 import android.graphics.Paint
 import android.graphics.Path
@@ -198,7 +203,19 @@ class JarvisService : AccessibilityService() {
         if (prefs.getBoolean("auto_listen", false)) main.postDelayed({ if (!listening) startListening(false) }, 1500)
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null || head?.running != true) return
+        when (event.eventType) {
+            AccessibilityEvent.TYPE_VIEW_FOCUSED, AccessibilityEvent.TYPE_VIEW_CLICKED -> {
+                val source = event.source ?: return
+                if (!source.isEditable) return
+                if (kbWanted || prefs.getBoolean("head_kb_auto", true)) main.post { showHeadKeyboard(source) }
+                else if (head?.keyboardShown == true) main.post { refreshHeadKeyboard() }
+            }
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> if (head?.keyboardShown == true)
+                main.postDelayed({ if (head?.keyboardShown == true && fieldText() == null) hideHeadKeyboard() }, 600)
+        }
+    }
 
     override fun onInterrupt() {}
 
@@ -224,8 +241,11 @@ class JarvisService : AccessibilityService() {
         hideGrid()
         try { unregisterReceiver(ecoReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(batteryReceiver) } catch (_: Exception) {}
+        hideHeadKeyboard()
         head?.stop()
         head = null
+        quran?.stop()
+        stopQibla()
         hideBubble()
         try { recognizer?.cancel() } catch (_: Exception) {}
         instance = null
@@ -862,6 +882,14 @@ class JarvisService : AccessibilityService() {
     // ---- media, camera, chats
 
     private fun media(kind: String): String {
+        quran?.takeIf { it.active }?.let { q ->
+            when (kind) {
+                "next" -> q.next()
+                "prev" -> q.prev()
+                else -> if (q.playing) q.pause() else q.resume()
+            }
+            return t("حاضر.", "Done.")
+        }
         val code = when (kind) {
             "next" -> KeyEvent.KEYCODE_MEDIA_NEXT
             "prev" -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
@@ -1430,7 +1458,8 @@ class JarvisService : AccessibilityService() {
             onTap = { x, y -> tapAt(x, y); beep(2) },
             onLongPress = { x, y -> longPressAt(x, y); beep(2) },
             onAction = { action, x, y -> headAction(action, x, y) },
-            onStatus = { log("${Brand.NAME}: $it") })
+            onStatus = { log("${Brand.NAME}: $it") },
+            onKey = { headKey(it) })
         head = control
         control.start(
             speed = prefs.getFloat("head_speed", 1f),
@@ -1454,6 +1483,7 @@ class JarvisService : AccessibilityService() {
 
     fun stopHead(): String {
         val was = head?.running == true
+        hideHeadKeyboard()
         head?.stop()
         head = null
         updateForeground()
@@ -1498,6 +1528,7 @@ class JarvisService : AccessibilityService() {
         main.post {
             if (kind != "again") ProactiveReceiver.schedule(this)          // the plan moves on to the next one
             if (kind == "prayer") { prayerAlert(text, attempt); return@post }
+            if (kind == "azkar") { azkarAlert(text); return@post }
             if (!prefs.getBoolean("pro_on", false)) return@post
             when (kind) {
                 "bedtime" -> {
@@ -1627,6 +1658,227 @@ class JarvisService : AccessibilityService() {
             else t("حان وقت صلاة ${prayerName(p)}.", "It is time for ${prayerName(p)}.")
         beep(2)
         announce(text, false, urgent = true)
+    }
+
+    // ------------------------------------------------------------------ Quran
+
+    private var quran: QuranPlayer? = null
+
+    private fun quranPlayer(): QuranPlayer = quran ?: QuranPlayer(this) { event ->
+        when (event) {
+            is QuranPlayer.Event.Started -> {
+                prefs.edit().putInt("quran_last", event.surah).apply()
+                if (event.fellBack) announce(t("الشيخ ما عندو تسجيل لـ${Quran.title(event.surah)}، فشغّلتها بصوت الشيخ مشاري العفاسي.",
+                    "That reciter has no recording of this surah, so it is Mishary Alafasy."), false)
+            }
+            is QuranPlayer.Event.Failed -> announce(t("ما قدرت أشغّل ${Quran.title(event.surah)}. اتأكد إنو الإنترنت شغّال.",
+                "I could not play the surah. Check the internet."), false)
+            QuranPlayer.Event.Finished -> {}
+        }
+    }.also { quran = it }
+
+    /** [surahs] empty: carry on from the last surah played (or start with Al-Fatiha). */
+    private fun playQuran(surahs: List<Int>, reciterId: String?): String {
+        val list = surahs.ifEmpty { listOf(prefs.getInt("quran_last", 1).coerceIn(1, 114)) }
+        val reciter = Quran.reciter(reciterId ?: prefs.getString("quran_reciter", Quran.DEFAULT_RECITER))
+        val player = quranPlayer()
+        player.continuous = list.size == 1 && prefs.getBoolean("quran_continue", true)
+        player.play(list, reciter.id)
+        val what = if (list == Quran.MUAWWIDHAT) "المعوذات" else Quran.title(list.first())
+        return t("حاضر، $what بصوت الشيخ ${reciter.ar}.", "Playing surah ${list.first()} by ${reciter.en}.")
+    }
+
+    private fun quranControl(what: String): String {
+        val q = quran
+        return when (what) {
+            "stop" -> if (q?.active == true) { q.stop(); t("وقّفت القرآن.", "Stopped.") } else t("القرآن ما شغّال.", "Nothing is playing.")
+            "resume" -> if (q?.resume() == true) t("حاضر.", "Done.") else playQuran(emptyList(), null)
+            "next" -> if (q?.active == true) { q.next(); t("${Quran.title(q.current)}.", "Next surah.") }
+                else playQuran(listOf(Quran.next(prefs.getInt("quran_last", 0).coerceIn(0, 114))), null)
+            "prev" -> if (q?.active == true) { q.prev(); t("${Quran.title(q.current)}.", "Previous surah.") }
+                else playQuran(listOf(Quran.prev(prefs.getInt("quran_last", 2).coerceIn(1, 114))), null)
+            else -> t("حاضر.", "Done.")
+        }
+    }
+
+    // ------------------------------------------------------------------ adhkar
+
+    /** [kind] null: morning adhkar until Asr, evening after it. */
+    private fun readAzkar(kind: String?): String {
+        val place = ProactiveReceiver.prayerPlace(this)
+        val now = java.util.Calendar.getInstance()
+        val times = PrayerTimes.forDay(now, place.lat, place.lon)
+        val minutes = now.get(java.util.Calendar.HOUR_OF_DAY) * 60 + now.get(java.util.Calendar.MINUTE)
+        val k = kind ?: Azkar.kindAt(minutes, times.getValue(PrayerTimes.Prayer.FAJR), times.getValue(PrayerTimes.Prayer.ASR))
+        quran?.takeIf { it.playing }?.pause()
+        return startReading(Azkar.script(k))
+    }
+
+    /** From the settings screen. */
+    fun readAzkarNow(kind: String) { main.post { respond(readAzkar(kind)) } }
+
+    /** The adhkar alarm: ask before reading, the person may be busy. */
+    private fun azkarAlert(kind: String) {
+        val question = t("وقت ${Azkar.title(kind)}. أقراها ليك؟ قول نعم أو لا.", "Time for the adhkar. Shall I read them?")
+        ask(question, seconds = 120) { readAzkar(kind) }
+        announce(question, true)
+    }
+
+    // ------------------------------------------------------------------ qibla
+
+    private var qiblaListener: SensorEventListener? = null
+    private var qiblaStep: Qibla.Step? = null
+    private var qiblaSaidAt = 0L
+    private var qiblaAheadSince = 0L
+    private val qiblaTimeout = Runnable { if (qiblaListener != null) { stopQibla(); say(t("وقّفت البوصلة.", "Compass off.")) } }
+
+    private fun stopQibla() {
+        qiblaListener?.let { (getSystemService(SENSOR_SERVICE) as SensorManager).unregisterListener(it) }
+        qiblaListener = null
+        main.removeCallbacks(qiblaTimeout)
+    }
+
+    /** Say where the qibla is, then guide the person round with the compass for half a minute. */
+    private fun qibla(): String {
+        stopQibla()
+        val place = ProactiveReceiver.prayerPlace(this)
+        val bearing = Qibla.bearing(place.lat, place.lon)
+        val where = t("القبلة من ${place.name} ناحية ${Qibla.compassWord(bearing)}، ${Qibla.degrees(bearing)} درجة من الشمال.",
+            "From ${place.name} the qibla is ${Qibla.degrees(bearing)} degrees from north.")
+        val sensors = getSystemService(SENSOR_SERVICE) as SensorManager
+        val sensor = sensors.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR) ?: return where
+        val declination = GeomagneticField(place.lat.toFloat(), place.lon.toFloat(), 0f, System.currentTimeMillis()).declination
+        val matrix = FloatArray(9)
+        val angles = FloatArray(3)
+        qiblaStep = null
+        qiblaAheadSince = 0L
+        qiblaSaidAt = SystemClock.elapsedRealtime() + 6000          // let the first sentence finish
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                SensorManager.getRotationMatrixFromVector(matrix, event.values)
+                SensorManager.getOrientation(matrix, angles)
+                val heading = (Math.toDegrees(angles[0].toDouble()) + declination + 360.0) % 360.0
+                val step = Qibla.step(Qibla.turn(heading, bearing))
+                val now = SystemClock.elapsedRealtime()
+                if (step == Qibla.Step.AHEAD) {
+                    if (qiblaAheadSince == 0L) qiblaAheadSince = now
+                    if (now - qiblaAheadSince > 2500 && now > qiblaSaidAt) {
+                        stopQibla(); beep(2)
+                        say(t("تمام، إنت هسي مواجه القبلة.", "You are facing the qibla."))
+                        return
+                    }
+                } else qiblaAheadSince = 0L
+                if (step != qiblaStep && now > qiblaSaidAt) {
+                    qiblaStep = step
+                    qiblaSaidAt = now + 1800
+                    say(Qibla.say(step, !arabic))
+                }
+            }
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        }
+        qiblaListener = listener
+        sensors.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_UI)
+        main.postDelayed(qiblaTimeout, 40_000)
+        return where + " " + t("خلّي التلفون مسطّح قدامك، ولف بشويش وأنا بوجهك.", "Hold the phone flat and turn slowly; I will guide you.")
+    }
+
+    // ------------------------------------------------------------------ head keyboard
+
+    private var kbWanted = false                   // asked for the keyboard before choosing a text field
+    private var kbWords: MutableMap<String, Int>? = null
+
+    private fun learnedWords(): MutableMap<String, Int> =
+        kbWords ?: WordPredict.decode(prefs.getString("kb_words", "").orEmpty()).also { kbWords = it }
+
+    private fun openHeadKeyboard(): String {
+        if (head?.running != true) {
+            val started = startHead()
+            if (head?.running != true) return started
+        }
+        val field = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (field == null) {
+            kbWanted = true
+            return t("وجّه الدائرة على خانة الكتابة وثبّتها، وأنا بفتح ليك الكيبورد.", "Aim at a text field and hold; the keyboard will open.")
+        }
+        showHeadKeyboard(field)
+        return t("الكيبورد جاهز. ثبّت الدائرة على الحرف لتكتبه.", "Keyboard ready. Hold the ring on a letter to type it.")
+    }
+
+    /** Over the half of the screen away from [field], so the person sees what they type. */
+    private fun showHeadKeyboard(field: AccessibilityNodeInfo) {
+        val control = head ?: return
+        kbWanted = false
+        val r = Rect()
+        field.getBoundsInScreen(r)
+        val atTop = r.centerY() > resources.displayMetrics.heightPixels / 2
+        try { softKeyboardController.showMode = SHOW_MODE_HIDDEN } catch (_: Exception) {}   // the phone's own keyboard would cover ours
+        if (!control.keyboardShown) control.showKeyboard(atTop, prefs.getLong("head_kb_dwell", 900L))
+        refreshHeadKeyboard()
+    }
+
+    private fun refreshHeadKeyboard() {
+        val text = fieldText()?.second.orEmpty()
+        head?.keyboardText(text, WordPredict.suggest(text, learnedWords()))
+    }
+
+    private fun hideHeadKeyboard() {
+        kbWanted = false
+        if (head?.keyboardShown != true) return
+        head?.hideKeyboard()
+        try { softKeyboardController.showMode = SHOW_MODE_AUTO } catch (_: Exception) {}
+    }
+
+    private fun headKey(key: HeadKeys.Key) {
+        when (key.kind) {
+            HeadKeys.Kind.CLOSE -> { hideHeadKeyboard(); return }
+            HeadKeys.Kind.MODE -> { head?.keyboardNumbers(); refreshHeadKeyboard(); return }
+            HeadKeys.Kind.ENTER -> { sendFromHeadKeyboard(); return }
+            else -> {}
+        }
+        val (field, old) = fieldText() ?: run { say(t("ما في خانة كتابة مختارة.", "No text field is selected.")); return }
+        val new = HeadKeys.apply(old, key)
+        if (new != old && !setFieldText(field, new)) { beep(3); return }
+        if (key.kind == HeadKeys.Kind.SPACE || key.kind == HeadKeys.Kind.SUGGEST) learnWords(new, lastOnly = true)
+        refreshHeadKeyboard()
+    }
+
+    /** Count what the person types, so the suggestions become theirs. */
+    private fun learnWords(text: String, lastOnly: Boolean) {
+        val words = learnedWords()
+        if (lastOnly) WordPredict.learnLast(text, words) else WordPredict.learn(text, words)
+        prefs.edit().putString("kb_words", WordPredict.encode(words)).apply()
+    }
+
+    /** The keyboard's send key: the field's own "enter" action, else a button called send, else a new line. */
+    private fun sendFromHeadKeyboard() {
+        val (field, text) = fieldText() ?: return
+        var done = false
+        if (Build.VERSION.SDK_INT >= 30)
+            done = field.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+        if (!done) {
+            val send = findNode(rootInActiveWindow) { n ->
+                val label = Commands.normalize((n.contentDescription ?: n.text ?: "").toString())
+                n.isClickable && label in setOf("ارسال", "send", "ارسل", "إرسال")
+            }
+            done = send?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+        }
+        if (!done) setFieldText(field, text + "\n")
+        beep(2)
+        main.postDelayed({ refreshHeadKeyboard() }, 400)
+    }
+
+    private fun findNode(root: AccessibilityNodeInfo?, test: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+        root ?: return null
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var seen = 0
+        while (queue.isNotEmpty() && seen < 600) {
+            val n = queue.removeFirst()
+            seen++
+            if (test(n)) return n
+            for (i in 0 until n.childCount) n.getChild(i)?.let { queue.add(it) }
+        }
+        return null
     }
 
     // ------------------------------------------------------------------ dialect training ("دربني")
@@ -1829,7 +2081,10 @@ class JarvisService : AccessibilityService() {
                 log("صوت العربية غير منزّل، لذلك تظهر الردود كتابة فقط. نزّله من الإعدادات ← حالة النظام ← صوت النطق.")
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) { lastActivity = SystemClock.elapsedRealtime() }
-                override fun onDone(utteranceId: String?) { resume(300); if (reading) scheduleReadAdvance() }
+                override fun onDone(utteranceId: String?) {
+                    resume(300); if (reading) scheduleReadAdvance()
+                    main.post { if (tts?.isSpeaking != true) quran?.duck(false) }
+                }
                 @Deprecated("Deprecated in Java")
                 override fun onError(utteranceId: String?) { resume(300) }
             })
@@ -1847,6 +2102,7 @@ class JarvisService : AccessibilityService() {
             }
             engine.language = if (arabic) Locale.forLanguageTag("ar") else Locale.US
             val mode = if (add) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH
+            if (quran?.playing == true) quran?.duck(true)
             if (engine.speak(text, mode, null, "jarvis") == TextToSpeech.SUCCESS) return
             log("تعذّر النطق. تحقق من محرك الصوت في إعدادات الهاتف.")
         } else {
@@ -2018,6 +2274,11 @@ class JarvisService : AccessibilityService() {
                 t("الساعة $now", "It is $now")
             }
             is Cmd.PrayerTime -> prayerAnswer(c.prayer)
+            is Cmd.Quran -> playQuran(c.surahs, c.reciter)
+            is Cmd.QuranCtl -> quranControl(c.what)
+            is Cmd.Azkar -> readAzkar(c.kind)
+            Cmd.Qibla -> qibla()
+            is Cmd.HeadKeyboard -> if (c.show) openHeadKeyboard() else { hideHeadKeyboard(); t("قفلت الكيبورد.", "Keyboard closed.") }
             Cmd.Emergency -> emergency()
             Cmd.Train -> startDialectTraining()
             is Cmd.Head -> if (c.on) startHead() else stopHead()
@@ -2031,6 +2292,9 @@ class JarvisService : AccessibilityService() {
             is Cmd.DeleteReminder -> deleteReminder(c.name)
             is Cmd.Teach -> teach(c.phrase, c.meaning)
             Cmd.Hush -> {
+                val talking = tts?.isSpeaking == true || reading
+                if (!talking) quran?.pause()
+                stopQibla()
                 try { tts?.stop() } catch (_: Exception) {}
                 reading = false; readQueue.clear(); main.removeCallbacks(readAdvance)
                 ""

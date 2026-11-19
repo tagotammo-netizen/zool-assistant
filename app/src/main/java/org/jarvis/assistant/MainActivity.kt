@@ -86,13 +86,16 @@ class MainActivity : AppCompatActivity() {
         Triple(R.id.switchProMorning, "pro_morning", true), Triple(R.id.switchProBattery, "pro_battery", true),
         Triple(R.id.switchHeadDwell, "head_dwell_on", true), Triple(R.id.switchHeadBlink, "head_blink", false),
         Triple(R.id.switchHeadInvert, "head_invert", false), Triple(R.id.switchHeadSmile, "head_smile", false),
-        Triple(R.id.switchPrayer, "prayer_alert", false),
+        Triple(R.id.switchPrayer, "prayer_alert", false), Triple(R.id.switchHeadKb, "head_kb_auto", true),
+        Triple(R.id.switchQuranContinue, "quran_continue", true), Triple(R.id.switchAzkar, "azkar_alert", false),
     )
 
     private val befores = listOf(R.id.beforeNow to 0, R.id.before10 to 10, R.id.before15 to 15)
     private val docks = listOf(R.id.dockLeft to "left", R.id.dockRight to "right", R.id.dockOff to "off")
 
     private val headSpeeds = listOf(R.id.headSlow to 0.6f, R.id.headNormal to 1f, R.id.headFast to 1.7f)
+    private val reciters = listOf(R.id.reciterAfs to "afs", R.id.reciterBasit to "basit", R.id.reciterNourin to "nourin")
+    private val kbDwells = listOf(R.id.kbFast to 600L, R.id.kbMid to 900L, R.id.kbSlow to 1300L)
     private val headDwells = listOf(R.id.dwellShort to 1000L, R.id.dwellMid to 1500L, R.id.dwellLong to 2500L)
 
     private val closeDrawerOnBack = object : OnBackPressedCallback(false) {
@@ -299,6 +302,10 @@ class MainActivity : AppCompatActivity() {
                 if (id == R.id.switchReadNotifs && checked && !notificationAccess()) openNotificationAccess()
                 if (id == R.id.switchBubble) JarvisService.instance?.let { if (checked) it.showBubble() else it.hideBubble() }
                 if (key.startsWith("prayer_")) { ProactiveReceiver.schedulePrayer(this); renderPrayer() }
+                if (key == "azkar_alert") {
+                    ProactiveReceiver.scheduleAzkar(this)
+                    if (checked && !exactAlarms()) toast("اسمح بالتذكير الدقيق حتى يجي التذكير في وقته")
+                }
                 if (key.startsWith("pro_")) {
                     saveSettings()
                     if (id == R.id.switchPro && checked && !exactAlarms()) toast("اسمح بالتذكير الدقيق حتى لا تتأخر التذكيرات")
@@ -376,6 +383,14 @@ class MainActivity : AppCompatActivity() {
             }
         }
         findViewById<View>(R.id.btnPrayerLocation).setOnClickListener { usePhoneLocation() }
+        findViewById<MaterialButtonToggleGroup>(R.id.reciterGroup).addOnButtonCheckedListener { _, id, isChecked ->
+            if (isChecked && !loading) reciters.firstOrNull { it.first == id }?.let { prefs.edit().putString("quran_reciter", it.second).apply() }
+        }
+        findViewById<MaterialButtonToggleGroup>(R.id.kbDwellGroup).addOnButtonCheckedListener { _, id, isChecked ->
+            if (isChecked && !loading) kbDwells.firstOrNull { it.first == id }?.let { prefs.edit().putLong("head_kb_dwell", it.second).apply() }
+        }
+        findViewById<View>(R.id.btnAzkarMorning).setOnClickListener { readAzkar("morning") }
+        findViewById<View>(R.id.btnAzkarEvening).setOnClickListener { readAzkar("evening") }
         findViewById<MaterialButtonToggleGroup>(R.id.headDockGroup).addOnButtonCheckedListener { _, id, isChecked ->
             if (isChecked && !loading) docks.firstOrNull { it.first == id }?.let { prefs.edit().putString("head_dock", it.second).apply() }
         }
@@ -408,6 +423,10 @@ class MainActivity : AppCompatActivity() {
             .check(if (prefs.getString("reply_style", "sudani") == "fusha") R.id.styleFusha else R.id.styleSudani)
         findViewById<MaterialButtonToggleGroup>(R.id.prayerBeforeGroup)
             .check(befores.firstOrNull { it.second == prefs.getInt("prayer_before", 0) }?.first ?: R.id.beforeNow)
+        findViewById<MaterialButtonToggleGroup>(R.id.reciterGroup)
+            .check(reciters.firstOrNull { it.second == prefs.getString("quran_reciter", Quran.DEFAULT_RECITER) }?.first ?: R.id.reciterAfs)
+        val kbDwell = prefs.getLong("head_kb_dwell", 900L)
+        findViewById<MaterialButtonToggleGroup>(R.id.kbDwellGroup).check(kbDwells.minBy { kotlin.math.abs(it.second - kbDwell) }.first)
         findViewById<MaterialButtonToggleGroup>(R.id.headDockGroup)
             .check(docks.firstOrNull { it.second == prefs.getString("head_dock", "left") }?.first ?: R.id.dockLeft)
         val wake = prefs.getString("wake_word", "زول").orEmpty()
@@ -460,8 +479,17 @@ class MainActivity : AppCompatActivity() {
         val line = PrayerTimes.FIVE.joinToString("  •  ") { p ->
             val m = times.getValue(p); "${p.ar} " + String.format(java.util.Locale.US, "%d:%02d", m / 60, m % 60)
         }
+        val qibla = Qibla.bearing(place.lat, place.lon)
         findViewById<TextView>(R.id.prayerToday).text =
-            (if (known) "" else "ما لقيت «$typed»، فاستعملت الخرطوم. ") + "${place.name} الليلة:\n$line"
+            (if (known) "" else "ما لقيت «$typed»، فاستعملت الخرطوم. ") + "${place.name} الليلة:\n$line" +
+                "\nالقبلة: ${Qibla.degrees(qibla)}° من الشمال (${Qibla.compassWord(qibla)})"
+    }
+
+    private fun readAzkar(kind: String) {
+        val service = JarvisService.instance
+        if (service == null) { toast("شغّل خدمة زول أولاً"); return }
+        service.readAzkarNow(kind)
+        drawer.closeDrawer(Gravity.RIGHT)
     }
 
     /** The phone's last known place, so prayer times fit where the person actually is. */
@@ -723,6 +751,10 @@ class MainActivity : AppCompatActivity() {
         "التحكم بالرأس" to listOf("شغّل التحكم بالرأس ← حرّك رأسك وثبّت الدائرة لتضغط",
             "ثبّت على ▲ ▼ في الشريط للتمرير، وعلى ↩ للرجوع", "اضغط هنا • اضغط مطوّل هنا • وسّط المؤشر",
             "وقّف الضغط • شغّل الضغط  (المؤشر يتحرك دون ضغط)", "وقّف التحكم بالرأس"),
+        "الكتابة بالراس" to listOf("اختار خانة الكتابة بالدائرة ← يطلع كيبورد كبير", "ثبّت على الحرف لتكتبه، وفوق في اقتراحات كلمات",
+            "اكتب بالراس • اقفل الكيبورد"),
+        "القرآن والأذكار" to listOf("شغّل سورة الكهف • سورة يس بصوت نورين", "شغّل المعوذات • السورة الجاية • وقّف القرآن",
+            "أذكار الصباح • أذكار المسا • أذكار النوم", "وين القبلة؟ ← خلّي التلفون مسطّح وهو بوجهك"),
         "الصلاة" to listOf("متين المغرب؟ • كم فاضل للعصر", "الصلاة الجاية • مواقيت الصلاة"),
         "الوقت بالسوداني" to listOf("صحيني سبعة إلا ربع • صحيني ستة وتلت الصباح", "ذكرني بالدوا كل يوم بعد العشا",
             "نبهني بعد تلت ساعة • بعد ساعة ونص"),
@@ -911,7 +943,8 @@ class MainActivity : AppCompatActivity() {
         "secret", "mode", "bubble", "ai_url", "ai_model", "ai_screen", "agent_on", "memory", "aliases",
         "pro_on", "pro_reminders", "pro_people", "pro_care", "pro_morning", "pro_battery", "pro_bedtime",
         "head_speed", "head_dwell", "head_dwell_on", "head_blink", "head_invert", "head_smile", "head_dock", "wake_word",
-        "reply_style", "prayer_alert", "prayer_before", "prayer_city", "prayer_lat", "prayer_lon")
+        "reply_style", "prayer_alert", "prayer_before", "prayer_city", "prayer_lat", "prayer_lon",
+        "head_kb_auto", "head_kb_dwell", "quran_reciter", "quran_continue", "azkar_alert")
 
     private val exportSettingsFile = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) {
@@ -940,7 +973,7 @@ class MainActivity : AppCompatActivity() {
                         is Number -> when (key) {
                             "head_speed", "prayer_lat", "prayer_lon" -> edit.putFloat(key, value.toFloat())
                             "prayer_before" -> edit.putInt(key, value.toInt())
-                            "head_dwell" -> edit.putLong(key, value.toLong())
+                            "head_dwell", "head_kb_dwell" -> edit.putLong(key, value.toLong())
                             else -> continue
                         }
                         else -> continue
@@ -1147,6 +1180,7 @@ class MainActivity : AppCompatActivity() {
             "الرئيسية" to "الرئيسية", "رجوع" to "ارجع", "الأرقام" to "الارقام", "انزل" to "انزل",
             "اطلع" to "اطلع", "الإشعارات" to "الاشعارات", "الكشاف" to "ولع الكشاف", "اقرأ الشاشة" to "اقرا الشاشة",
             "تذكيراتي" to "تذكيراتي", "الصلاة الجاية" to "الصلاة الجاية",
+            "الأذكار" to "الاذكار", "القبلة" to "وين القبلة",
         )
         for ((label, command) in items) {
             val chip = TextView(this)
