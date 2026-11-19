@@ -59,6 +59,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".FeaturesActivity"
+            android:exported="false"
+            android:label="ميزات زول" />
+
         <service
             android:name=".JarvisService"
             android:exported="true"

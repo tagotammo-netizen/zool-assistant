@@ -170,7 +170,27 @@ class MainActivity : AppCompatActivity() {
         input.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEND) { send(); true } else false
         }
-        if (!prefs.getBoolean("wizard_done", false) && nextStep() != null) drawer.post { showWizard() } else askPermissions()
+        findViewById<View>(R.id.btnFeatures).setOnClickListener { startActivity(Intent(this, FeaturesActivity::class.java)) }
+        when {
+            intent?.getStringExtra(EXTRA_OPEN) != null -> drawer.post { openFromFeatures(intent) }
+            !prefs.getBoolean("wizard_done", false) && nextStep() != null -> drawer.post { showWizard() }
+            else -> askPermissions()
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        openFromFeatures(intent)
+    }
+
+    /** The features screen asked for something that lives here. */
+    private fun openFromFeatures(intent: Intent?) {
+        when (intent?.getStringExtra(EXTRA_OPEN)) {
+            "wizard" -> showWizard()
+            "keepalive" -> openKeepAlive()
+            "report" -> sendReport()
+        }
+        intent?.removeExtra(EXTRA_OPEN)
     }
 
     /**
@@ -1401,9 +1421,10 @@ class MainActivity : AppCompatActivity() {
             .putExtra(Intent.EXTRA_SUBJECT, "تقرير مشكلة زول").putExtra(Intent.EXTRA_TEXT, text), "أرسل التقرير"))
     }
 
-    private companion object {
-        const val REQ_CAMERA = 77
-        const val REQ_LOCATION = 78
+    companion object {
+        const val EXTRA_OPEN = "open"
+        private const val REQ_CAMERA = 77
+        private const val REQ_LOCATION = 78
     }
 }
 

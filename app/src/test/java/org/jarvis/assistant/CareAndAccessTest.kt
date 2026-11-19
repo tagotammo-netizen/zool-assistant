@@ -124,6 +124,15 @@ class CareAndAccessTest {
         assertEquals(-1, SwitchScan.next(0, 0))
     }
 
+    @Test fun everyFeatureTileIsUnderstood() {
+        for (tile in Features.ALL) {
+            if (tile.special.isNotEmpty()) continue
+            assertTrue("${tile.title}: ${tile.command}", Commands.parse(tile.command) != null)
+        }
+        assertEquals(Cmd.Qibla, Commands.parse(Features.ALL.first { it.title == "القبلة" }.command))
+        assertTrue(Features.ALL.map { it.title }.toSet().size == Features.ALL.size)
+    }
+
     @Test fun newCommands() {
         assertEquals(Cmd.Board(true), Commands.parse("لوحة الكلام"))
         assertEquals(Cmd.Board(false), Commands.parse("اقفل لوحة الكلام"))

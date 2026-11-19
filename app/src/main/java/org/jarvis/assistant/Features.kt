@@ -1,0 +1,50 @@
+package org.jarvis.assistant
+
+/**
+ * The features screen: every big thing Zol does, one tap away, in groups. Most tiles send the same sentence the
+ * person would say, so they behave exactly like the voice command; a few ([special]) need the screen itself.
+ */
+object Features {
+
+    data class Tile(val emoji: String, val title: String, val hint: String, val command: String = "", val special: String = "",
+                    val confirm: Boolean = false)
+
+    data class Group(val title: String, val tiles: List<Tile>)
+
+    val GROUPS = listOf(
+        Group("التواصل", listOf(
+            Tile("🎤", "الاستماع", "شغّل أو وقّف الاستماع", special = "listen"),
+            Tile("💬", "لوحة الكلام", "عبارات بتتقال بصوت عالي", "لوحة الكلام"),
+            Tile("📞", "أبلغ المرافق", "رسالة إنك محتاجو", "ابلغ المرافق", confirm = true),
+            Tile("🆘", "طوارئ", "اتصال وتنبيه عاجل", "ساعدوني", confirm = true),
+        )),
+        Group("التحكم", listOf(
+            Tile("🙂", "التحكم بالراس", "مؤشر بيمشي مع راسك", special = "head"),
+            Tile("⌨", "الكتابة بالراس", "كيبورد كبير بالراس", "اكتب بالراس"),
+            Tile("🔢", "الأرقام", "رقم على كل زر", "الارقام"),
+            Tile("📰", "اقرا الشاشة", "زول يقرا الفي الشاشة", "اقرا الشاشة"),
+        )),
+        Group("الدين", listOf(
+            Tile("📖", "القرآن", "كمّل من آخر سورة", "شغل القران"),
+            Tile("⏹", "وقّف القرآن", "", "وقف القران"),
+            Tile("📿", "الأذكار", "صباح أو مسا حسب الوقت", "الاذكار"),
+            Tile("🧭", "القبلة", "البوصلة بتوجهك", "وين القبلة"),
+            Tile("🕌", "الصلاة الجاية", "متين وكم فاضل", "الصلاة الجاية"),
+            Tile("🗓", "مواقيت اليوم", "كل الصلوات", "مواقيت الصلاة"),
+        )),
+        Group("يومي", listOf(
+            Tile("⏰", "تذكيراتي", "شنو التذكيرات الضابطها", "تذكيراتي"),
+            Tile("🔋", "البطارية", "كم فاضل في الشحن", "البطارية"),
+            Tile("🕐", "الساعة كم", "", "كم الساعة"),
+            Tile("🔔", "الإشعارات", "اقرا الإشعارات الجديدة", "اقرا الاشعارات"),
+        )),
+        Group("المساعدة", listOf(
+            Tile("🎓", "دربني", "علّم زول لهجتك", "دربني"),
+            Tile("🧩", "معالج الإعداد", "خطوة بخطوة", special = "wizard"),
+            Tile("🛡", "خلّي زول ما يقفل", "حسب نوع تلفونك", special = "keepalive"),
+            Tile("🐞", "تقرير مشكلة", "أرسلو للمطوّر", special = "report"),
+        )),
+    )
+
+    val ALL get() = GROUPS.flatMap { it.tiles }
+}

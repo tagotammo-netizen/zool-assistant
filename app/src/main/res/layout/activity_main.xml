@@ -31,6 +31,16 @@
                 android:src="@drawable/ic_menu"
                 app:tint="@color/on_surface" />
 
+            <ImageButton
+                android:id="@+id/btnFeatures"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_icon_btn"
+                android:contentDescription="الميزات"
+                android:src="@drawable/ic_spark"
+                app:tint="@color/primary" />
+
             <ImageView
                 android:layout_width="44dp"
                 android:layout_height="44dp"
