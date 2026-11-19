@@ -53,6 +53,14 @@ class ListeningAndDownloadTest {
         assertEquals(0.0 to 0.0, SpeechGate.stats(emptyList()))
     }
 
+    @Test fun whisperNoiseIsDropped() {
+        assertEquals("زول كم الساعة", whisperText("", listOf("زول كم" to 0.1, " الساعة" to 0.2)))
+        assertEquals("زول كم", whisperText("", listOf("زول كم" to 0.1, "ههه" to 0.9)))
+        assertEquals("", whisperText("ترجمة نانسي قنقر", null))
+        assertEquals("", whisperText("شكرا للمشاهدة", null))
+        assertEquals("افتح واتساب", whisperText("«افتح واتساب»", null))
+    }
+
     @Test fun loudness() {
         val pcm = ByteArray(4)
         pcm[0] = 0xE8.toByte(); pcm[1] = 0x03        // 1000

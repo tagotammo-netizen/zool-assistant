@@ -180,3 +180,19 @@ object Downloads {
         if (state != State.RUNNING) jobs.remove(j.id)
     }
 }
+
+
+/** Sentences Whisper makes up from noise or silence (it learned them from subtitles). */
+private val whisperInventions = listOf("نانسي قنقر", "اشتركوا في القناة", "اشترك في القناة", "شكرا للمشاهدة", "شكراً للمشاهدة",
+    "ترجمة الفيلم", "Thank you for watching", "Subscribe")
+
+/**
+ * The words Whisper wrote: [segments] are (text, chance that it was not speech); pieces that were probably not speech
+ * and the lines Whisper invents from noise are dropped. Without segments, [text] is used.
+ */
+fun whisperText(text: String, segments: List<Pair<String, Double>>?): String {
+    val words = segments?.filter { it.second < 0.6 }?.joinToString(" ") { it.first } ?: text
+    val clean = words.replace(Regex("[\"«»]"), "").replace(Regex("\\s+"), " ").trim()
+    if (clean.length < 2 || whisperInventions.any { clean.contains(it, ignoreCase = true) }) return ""
+    return clean
+}

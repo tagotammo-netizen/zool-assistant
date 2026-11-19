@@ -334,6 +334,38 @@ class MainActivity : AppCompatActivity() {
         view.setCompoundDrawablesRelativeWithIntrinsicBounds(start, null, end, null)
     }
 
+    private fun groqKeyMissing() = prefs.getString("stt_key", "").orEmpty().isBlank() &&
+        !(prefs.getString("ai_url", "").orEmpty().contains("groq.com") && prefs.getString("ai_key", "").orEmpty().isNotBlank())
+
+    /** Listening through Groq needs a (free) Groq key: ask for it, and switch back off without one. */
+    private fun askGroqKey(switchId: Int) {
+        val field = EditText(this).apply {
+            hint = "gsk_..."
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setSingleLine()
+        }
+        fun off() { loading = true; findViewById<MaterialSwitch>(switchId).isChecked = false; loading = false
+            prefs.edit().putBoolean("stt_cloud", false).apply() }
+        AlertDialog.Builder(this)
+            .setTitle("مفتاح Groq")
+            .setMessage("اعمل مفتاح مجاني من console.groq.com/keys وألصقو هنا. المفتاح بيفضل في التلفون بس.")
+            .setView(field)
+            .setPositiveButton("حفظ") { _, _ ->
+                val k = field.text.toString().trim()
+                if (k.isEmpty()) off() else {
+                    prefs.edit().putString("stt_key", k).apply()
+                    JarvisService.instance?.listeningChanged()
+                }
+            }
+            .setNeutralButton("افتح الموقع") { _, _ ->
+                off()
+                try { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://console.groq.com/keys"))) } catch (_: Exception) {}
+            }
+            .setNegativeButton("إلغاء") { _, _ -> off() }
+            .setOnCancelListener { off() }
+            .show()
+    }
+
     /** Buttons and switches of the drawer. Switches save at once; text fields are saved when the drawer closes. */
     private fun setupSettings() {
         for ((id, key, _) in switchSettings) {
@@ -344,7 +376,9 @@ class MainActivity : AppCompatActivity() {
                 if (id == R.id.switchBubble) JarvisService.instance?.let { if (checked) it.showBubble() else it.hideBubble() }
                 if (key.startsWith("prayer_")) { ProactiveReceiver.schedulePrayer(this); renderPrayer() }
                 if (key == "remote_on" && checked) enableRemote()
-                if (key == "stt_cloud") JarvisService.instance?.listeningChanged()
+                if (key == "stt_cloud") {
+                    if (checked && groqKeyMissing()) askGroqKey(id) else JarvisService.instance?.listeningChanged()
+                }
                 if (key == "fall_on" || key == "switch_volume" || key == "remote_on") { JarvisService.instance?.applyCareSettings(); renderCare() }
                 if (key == "azkar_alert") {
                     ProactiveReceiver.scheduleAzkar(this)

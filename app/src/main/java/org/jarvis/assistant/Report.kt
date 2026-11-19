@@ -18,7 +18,7 @@ object Report {
     )
 
     /** Settings that may hold private things are never put in the report. */
-    private val PRIVATE = setOf("ai_key", "emergency_number", "ntfy_topic", "remote_topic", "remote_pin", "home_key",
+    private val PRIVATE = setOf("ai_key", "stt_key", "emergency_number", "ntfy_topic", "remote_topic", "remote_pin", "home_key",
         "home_base", "prayer_lat", "prayer_lon", "secret", "aac_custom", "kb_words", "memory", "phrases")
 
     private val NUMBER = Regex("\\+?\\d[\\d\\s-]{6,}\\d")

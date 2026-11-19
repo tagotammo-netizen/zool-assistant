@@ -718,11 +718,11 @@
                     <com.google.android.material.materialswitch.MaterialSwitch
                         android:id="@+id/switchCloudStt"
                         style="@style/JSwitch"
-                        android:text="اسمع عن طريق Gemini (أدق للهجة السودانية، محتاج نت ومفتاح Gemini)" />
+                        android:text="اسمع عن طريق Groq Whisper (مجاني، أدق للهجة، محتاج نت ومفتاح Groq)" />
 
                     <TextView
                         style="@style/JNote"
-                        android:text="زول بيسمع بالمايك جوه التلفون، ويرسل الجملة بس (ما السكوت) لـ Gemini يكتبها. لو Google رفض الطلبات، زول بيتحول لـ Gemini براهو لمدة نص ساعة." />
+                        android:text="زول بيسمع بالمايك جوه التلفون، ويرسل الجملة بس (ما السكوت) لـ Groq Whisper يكتبها. المفتاح مجاني من console.groq.com/keys. لو Google رفض الطلبات، زول بيتحول لـ Groq براهو لمدة نص ساعة." />
 
                     <com.google.android.material.materialswitch.MaterialSwitch
                         android:id="@+id/switchWhisper"

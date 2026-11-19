@@ -751,8 +751,12 @@ class JarvisService : AccessibilityService() {
     private var cloudLastAt = 0L
 
     /** Gemini can hear: the smart server in settings is Gemini, with a key. */
-    private fun cloudSttReady() = prefs.getString("ai_url", "").orEmpty().contains("generativelanguage.googleapis.com") &&
-        prefs.getString("ai_key", "").orEmpty().isNotBlank()
+    private fun cloudSttReady() = groqKey().isNotBlank()
+
+    /** The Groq key for listening: its own field, or the smart-mode key when the smart server is Groq. */
+    private fun groqKey(): String = prefs.getString("stt_key", "").orEmpty().trim().ifEmpty {
+        if (prefs.getString("ai_url", "").orEmpty().contains("groq.com")) prefs.getString("ai_key", "").orEmpty().trim() else ""
+    }
 
     private fun cloudStt() = cloudSttReady() && (prefs.getBoolean("stt_cloud", false) || SystemClock.elapsedRealtime() < cloudSttUntil)
 
@@ -763,7 +767,7 @@ class JarvisService : AccessibilityService() {
         e.captureMode = true
         if (!e.active && !e.start()) {
             cloudSttUntil = 0L
-            log("ما قدرت أفتح المايك للاستماع عن طريق Gemini.")
+            log("ما قدرت أفتح المايك للاستماع عن طريق Groq.")
             ear = null
             return
         }
@@ -778,7 +782,7 @@ class JarvisService : AccessibilityService() {
         cloudBusy = true
         cloudLastAt = now
         Thread {
-            val text = try { transcribe(pcm) } finally { cloudBusy = false }
+            val text = try { groqTranscribe(pcm) } finally { cloudBusy = false }
             main.post {
                 lastActivity = SystemClock.elapsedRealtime()
                 if (!text.isNullOrBlank() && listening) {
@@ -806,37 +810,9 @@ class JarvisService : AccessibilityService() {
         return true
     }
 
-    /**
-     * Gemini writes down the sentence. Gemini's own API (generateContent with the WAV inline), which takes audio
-     * for every Gemini model; the OpenAI-compatible address answered 404 for audio. Off the main thread.
-     */
-    // the flash models this key can use, asked from Google once; a busy model is swapped for another for a while
-    @Volatile private var flashModels: List<String>? = null
-    @Volatile private var sttModel: String? = null
-    @Volatile private var sttModelUntil = 0L
     private var lastCloudLog = 0L
 
-    /** Other Gemini "flash" models that take audio, from Google's own list (names are never guessed). */
-    private fun otherFlashModel(current: String, key: String): String? {
-        val list = flashModels ?: try {
-            val con = URL("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200").openConnection() as HttpURLConnection
-            con.connectTimeout = 8000
-            con.readTimeout = 10000
-            con.setRequestProperty("x-goog-api-key", key)
-            val raw = if (con.responseCode in 200..299) con.inputStream.bufferedReader().use { it.readText() } else ""
-            con.disconnect()
-            val arr = if (raw.isEmpty()) JSONArray() else JSONObject(raw).optJSONArray("models") ?: JSONArray()
-            (0 until arr.length()).map { arr.getJSONObject(it) }
-                .filter { m -> m.optJSONArray("supportedGenerationMethods")?.toString()?.contains("generateContent") == true }
-                .map { it.optString("name").removePrefix("models/") }
-                .filter { n -> "flash" in n && listOf("image", "tts", "live", "audio", "embed", "exp", "preview").none { it in n } }
-                .filter { n -> !n.startsWith("gemini-1") && !n.startsWith("gemini-2") }     // retired for new users
-                .also { flashModels = it }
-        } catch (_: Exception) { emptyList() }
-        return list.filter { it != current }.maxByOrNull { it }      // the newest name sorts last
-    }
-
-    /** Log at most once every half minute, so a busy Gemini does not fill the chat. */
+    /** At most one line every 30 s about the cloud being busy, so the chat is not flooded. */
     private fun cloudLog(text: String) {
         val now = SystemClock.elapsedRealtime()
         if (now - lastCloudLog < 30_000) return
@@ -845,61 +821,45 @@ class JarvisService : AccessibilityService() {
     }
 
     /**
-     * Gemini writes down the sentence (Gemini's own generateContent, WAV inline). A model Google retired is replaced
-     * by the one Google names; a busy model (503, timeout, limit reached) by another flash model for ten minutes.
-     * Only lasting errors (a bad key, a refused request) turn Gemini listening off. Off the main thread.
+     * Groq's Whisper (large-v3-turbo) writes down the sentence: free, fast, and good at Arabic. The sound goes as a
+     * WAV file (OpenAI-style /audio/transcriptions). Pieces Whisper itself marks as "probably no speech" and the
+     * sentences Whisper is known to invent from noise are dropped. Off the main thread.
      */
-    private fun transcribe(pcm: ByteArray, attempt: Int = 0, forced: String? = null): String? {
-        val key = prefs.getString("ai_key", "").orEmpty().trim()
-        val chosen = prefs.getString("ai_model", "").orEmpty().trim().removePrefix("models/").ifEmpty { "gemini-3.8-flash" }
-        val model = forced ?: sttModel?.takeIf { SystemClock.elapsedRealtime() < sttModelUntil } ?: chosen
-        fun busy(why: String): String? {
-            if (attempt < 2) {
-                val alt = otherFlashModel(model, key)
-                if (alt != null) {
-                    sttModel = alt
-                    sttModelUntil = SystemClock.elapsedRealtime() + 10 * 60_000L
-                    cloudLog("Gemini «$model» مزحوم ($why)، استعملت «$alt» مؤقتاً.")
-                    return transcribe(pcm, attempt + 1, alt)
-                }
-            }
-            cloudLog("Gemini مزحوم ($why). بحاول تاني مع الجملة الجاية.")
-            return null
-        }
+    private fun groqTranscribe(pcm: ByteArray): String? {
+        val key = groqKey()
+        if (key.isEmpty()) return null
+        val boundary = "zol" + System.nanoTime()
         return try {
-            val audio = android.util.Base64.encodeToString(MicGate.wav(pcm), android.util.Base64.NO_WRAP)
-            val body = JSONObject()
-                .put("system_instruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text",
-                    "Write down exactly the words spoken in the audio, in the language and dialect spoken (usually Sudanese Arabic, " +
-                    "sometimes English). Arabic in Arabic letters. Output only the words, no quotes, no translation, no comments. " +
-                    "If there is no clear speech, output nothing."))))
-                .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray()
-                    .put(JSONObject().put("inline_data", JSONObject().put("mime_type", "audio/wav").put("data", audio)))
-                    .put(JSONObject().put("text", "Transcribe.")))))
-                .put("generationConfig", JSONObject().put("temperature", 0).put("maxOutputTokens", 1024).apply {
-                    if (model.startsWith("gemini-2.5-flash")) put("thinkingConfig", JSONObject().put("thinkingBudget", 0))
-                })
-            val con = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent").openConnection() as HttpURLConnection
+            val con = URL("https://api.groq.com/openai/v1/audio/transcriptions").openConnection() as HttpURLConnection
             con.requestMethod = "POST"
             con.doOutput = true
             con.connectTimeout = 8000
             con.readTimeout = 15000
-            con.setRequestProperty("Content-Type", "application/json")
-            con.setRequestProperty("x-goog-api-key", key)
-            con.outputStream.use { it.write(body.toString().toByteArray()) }
+            con.setRequestProperty("Authorization", "Bearer $key")
+            con.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+            con.outputStream.use { out ->
+                fun field(name: String, value: String) =
+                    out.write("--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n".toByteArray())
+                field("model", "whisper-large-v3-turbo")
+                field("response_format", "verbose_json")
+                field("temperature", "0")
+                if (prefs.getString("lang", "ar-SA").orEmpty().startsWith("ar")) field("language", "ar")
+                field("prompt", "${Commands.wakeWord}، كم الساعة، اتصل، افتح، اقفل، رسالة، واتساب")   // helps Whisper with the wake word
+                out.write("--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"s.wav\"\r\nContent-Type: audio/wav\r\n\r\n".toByteArray())
+                out.write(MicGate.wav(pcm))
+                out.write("\r\n--$boundary--\r\n".toByteArray())
+            }
             val code = con.responseCode
             if (code !in 200..299) {
-                // Google's own explanation (never contains the key), so the report says what is wrong
                 val why = try { con.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty() } catch (_: Exception) { "" }
                 val msg = Regex("\"message\"\\s*:\\s*\"([^\"]{0,160})").find(why)?.groupValues?.get(1) ?: why.take(160)
                 con.disconnect()
-                if (code == 404 && attempt == 0 && followModelHint(why)) return transcribe(pcm, 1)
-                if (code == 429 || code >= 500) return busy(if (code == 429) "وصل حدّو" else "$code")
+                if (code == 429 || code >= 500) { cloudLog("Groq مزحوم (${if (code == 429) "وصل حدّو" else "$code"}). بحاول مع الجملة الجاية."); return null }
                 main.post {
                     cloudFailures++
-                    log("Gemini رد بـ $code: $msg")
+                    log("Groq رد بـ $code: $msg" + if (code == 401) " (المفتاح غلط)" else "")
                     if (cloudFailures >= 3) {
-                        log("وقّفت الاستماع عن طريق Gemini بعد 3 أخطاء، برجع لـ Google.")
+                        log("وقّفت الاستماع عن طريق Groq بعد 3 أخطاء، برجع لـ Google.")
                         cloudSttUntil = 0L
                         prefs.edit().putBoolean("stt_cloud", false).apply()
                         cloudFailures = 0
@@ -911,14 +871,16 @@ class JarvisService : AccessibilityService() {
             val raw = con.inputStream.bufferedReader().use { it.readText() }
             con.disconnect()
             main.post { cloudFailures = 0 }
-            val parts = JSONObject(raw).optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
-                ?: return ""
-            (0 until parts.length()).joinToString(" ") { parts.getJSONObject(it).optString("text") }
-                .replace(Regex("[\"«»]"), "").trim()
+            val json = JSONObject(raw)
+            val segs = json.optJSONArray("segments")?.let { a ->
+                (0 until a.length()).map { a.getJSONObject(it).let { o -> o.optString("text") to o.optDouble("no_speech_prob", 0.0) } }
+            }
+            whisperText(json.optString("text"), segs)
         } catch (e: java.net.SocketTimeoutException) {
-            busy("ما رد في الوقت")
+            cloudLog("Groq ما رد في الوقت. بحاول مع الجملة الجاية.")
+            null
         } catch (e: Exception) {
-            cloudLog("ما قدرت أرسل الصوت لـ Gemini: ${e.message}")
+            cloudLog("ما قدرت أرسل الصوت لـ Groq: ${e.message}")
             null
         }
     }
@@ -1873,7 +1835,7 @@ class JarvisService : AccessibilityService() {
                     rebuildRecognizer()
                     if (busyErrors == 2 && cloudSttReady() && !cloudStt()) {
                         cloudSttUntil = SystemClock.elapsedRealtime() + 30 * 60_000L
-                        log("Google رافض الطلبات، بقيت أسمع عن طريق Gemini لمدة نص ساعة.")
+                        log("Google رافض الطلبات، بقيت أسمع عن طريق Groq Whisper لمدة نص ساعة.")
                         resume(300)
                         return
                     }
