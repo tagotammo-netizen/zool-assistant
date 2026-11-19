@@ -17,6 +17,8 @@ class MicGate(
     private val onSpeech: () -> Unit,
     private val onUtterance: (ByteArray) -> Unit = {},
     private val onSilenced: () -> Unit = {},
+    /** Android says it is giving this recording silence (another app has the microphone). */
+    private val androidSilenced: (session: Int) -> Boolean = { false },
 ) {
 
     companion object {
@@ -139,9 +141,13 @@ class MicGate(
             val heard = SpeechGate.level(buf, n)
             peak = maxOf(heard, peak * 0.995)
             speechPeak = maxOf(heard, speechPeak * 0.999)
-            if (heard < 1.0) {                                   // pure digital silence, not a quiet room
+            if (heard < 1.0) {
+                // Exact zeros. Some phones (Honor) give zeros in a quiet room; only Android itself can say whether
+                // it is silencing Zol, so ask it, once every 4 seconds of zeros.
                 if (zeroSince < 0) zeroSince = now
-                if (!silenced && now - zeroSince > 4_000) { silenced = true; onSilenced() }
+                if (!silenced && now - zeroSince > 4_000) {
+                    if (androidSilenced(r.audioSessionId)) { silenced = true; onSilenced() } else zeroSince = now
+                }
             } else { zeroSince = -1L; silenced = false }
             val out = sink
             if (out != null) {

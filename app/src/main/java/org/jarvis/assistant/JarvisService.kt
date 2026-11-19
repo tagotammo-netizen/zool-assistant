@@ -604,8 +604,15 @@ class JarvisService : AccessibilityService() {
 
     private var silencedTries = 0
 
-    private fun newEar() = MicGate({ main.post { gateSession() } }, { pcm -> cloudHeard(pcm) }, { main.post { earSilenced() } })
+    private fun newEar() = MicGate({ main.post { gateSession() } }, { pcm -> cloudHeard(pcm) }, { main.post { earSilenced() } },
+        { session -> androidSilences(session) })
         .also { it.source = (prefs.getInt("mic_source", 1) + silencedTries) % 2 }
+
+    /** Android's own answer: is it giving this recording silence? (Zeros alone can be a quiet room on some phones.) */
+    private fun androidSilences(session: Int): Boolean = if (Build.VERSION.SDK_INT < 29) true else try {
+        getSystemService(AudioManager::class.java).activeRecordingConfigurations
+            .any { it.clientAudioSessionId == session && it.isClientSilenced }
+    } catch (_: Exception) { false }
 
     /**
      * Android gives Zol's microphone only silence. Usually another app holds it (a voice assistant such as YOYO or
@@ -774,7 +781,12 @@ class JarvisService : AccessibilityService() {
             val text = try { transcribe(pcm) } finally { cloudBusy = false }
             main.post {
                 lastActivity = SystemClock.elapsedRealtime()
-                if (!text.isNullOrBlank() && listening) processResults(listOf(text.trim()))
+                if (!text.isNullOrBlank() && listening) {
+                    val said = text.trim()
+                    if (Commands.stripWake(said) == null && SystemClock.elapsedRealtime() >= awakeUntil && pending == null)
+                        log("سمعت «${said.take(60)}» (بدون «${Commands.wakeWord}»، فما عملت حاجة).")
+                    processResults(listOf(said))
+                }
             }
         }.start()
     }
