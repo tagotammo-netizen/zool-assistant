@@ -639,10 +639,23 @@ class JarvisService : AccessibilityService() {
     private var cloudFailures = 0
 
     /**
+     * Google retires Gemini models and says which one to use instead ("... use models/gemini-3.8-flash ...").
+     * Take that model for every request (listening and the smart mode). True when the model was changed.
+     */
+    private fun followModelHint(error: String): Boolean {
+        val next = Regex("use models/([A-Za-z0-9.\\-]+)").find(error)?.groupValues?.get(1)?.trimEnd('.') ?: return false
+        val old = prefs.getString("ai_model", "").orEmpty()
+        if (next == old) return false
+        prefs.edit().putString("ai_model", next).apply()
+        main.post { log("موديل Gemini «$old» ما بقى متاح، غيّرتو لـ «$next» زي ما Google قال.") }
+        return true
+    }
+
+    /**
      * Gemini writes down the sentence. Gemini's own API (generateContent with the WAV inline), which takes audio
      * for every Gemini model; the OpenAI-compatible address answered 404 for audio. Off the main thread.
      */
-    private fun transcribe(pcm: ByteArray): String? {
+    private fun transcribe(pcm: ByteArray, retried: Boolean = false): String? {
         val key = prefs.getString("ai_key", "").orEmpty().trim()
         val model = prefs.getString("ai_model", "").orEmpty().trim().removePrefix("models/").ifEmpty { "gemini-2.5-flash" }
         return try {
@@ -655,7 +668,7 @@ class JarvisService : AccessibilityService() {
                 .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray()
                     .put(JSONObject().put("inline_data", JSONObject().put("mime_type", "audio/wav").put("data", audio)))
                     .put(JSONObject().put("text", "Transcribe.")))))
-                .put("generationConfig", JSONObject().put("temperature", 0).put("maxOutputTokens", 200).apply {
+                .put("generationConfig", JSONObject().put("temperature", 0).put("maxOutputTokens", 1024).apply {
                     if (model.startsWith("gemini-2.5-flash")) put("thinkingConfig", JSONObject().put("thinkingBudget", 0))
                 })
             val con = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent").openConnection() as HttpURLConnection
@@ -672,6 +685,7 @@ class JarvisService : AccessibilityService() {
                 val why = try { con.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty() } catch (_: Exception) { "" }
                 val msg = Regex("\"message\"\\s*:\\s*\"([^\"]{0,160})").find(why)?.groupValues?.get(1) ?: why.take(160)
                 con.disconnect()
+                if (code == 404 && !retried && followModelHint(why)) return transcribe(pcm, true)
                 main.post {
                     cloudFailures++
                     if (code == 429) log("Gemini وصل حدّو في الدقيقة أو اليوم. برجع لاستماع Google.")
@@ -2688,7 +2702,7 @@ class JarvisService : AccessibilityService() {
     }
 
     /** One blocking request to the OpenAI-compatible server in settings (Gemini, Groq, Ollama...). Call it off the main thread. */
-    private fun cloudChat(system: String, user: String, maxTokens: Int = 300): String? {
+    private fun cloudChat(system: String, user: String, maxTokens: Int = 300, retried: Boolean = false): String? {
         var base = prefs.getString("ai_url", "").orEmpty().trim().trimEnd('/')
         if (base.isEmpty()) return null
         if (!base.startsWith("http")) base = "http://$base"
@@ -2701,7 +2715,9 @@ class JarvisService : AccessibilityService() {
                 .put("messages", JSONArray()
                     .put(JSONObject().put("role", "system").put("content", system))
                     .put(JSONObject().put("role", "user").put("content", user)))
-            if (base.contains("generativelanguage.googleapis.com")) body.put("reasoning_effort", "none")   // Gemini 2.5 would spend the tokens thinking
+            // Gemini would spend the tokens thinking: none for 2.5 (allowed there), low for newer models
+            if (base.contains("generativelanguage.googleapis.com"))
+                body.put("reasoning_effort", if (body.optString("model").startsWith("gemini-2.5")) "none" else "low")
             val con = URL("$base/chat/completions").openConnection() as HttpURLConnection
             con.requestMethod = "POST"
             con.doOutput = true
@@ -2710,7 +2726,13 @@ class JarvisService : AccessibilityService() {
             con.setRequestProperty("Content-Type", "application/json")
             if (key.isNotEmpty()) con.setRequestProperty("Authorization", "Bearer $key")
             con.outputStream.use { it.write(body.toString().toByteArray()) }
-            if (con.responseCode !in 200..299) throw Exception("HTTP ${con.responseCode}")
+            if (con.responseCode !in 200..299) {
+                val why = try { con.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty() } catch (_: Exception) { "" }
+                val code = con.responseCode
+                con.disconnect()
+                if (code == 404 && !retried && followModelHint(why)) return cloudChat(system, user, maxTokens, true)
+                throw Exception("HTTP $code " + (Regex("\"message\"\\s*:\\s*\"([^\"]{0,120})").find(why)?.groupValues?.get(1) ?: ""))
+            }
             val raw = con.inputStream.bufferedReader().use { it.readText() }
             con.disconnect()
             JSONObject(raw).getJSONArray("choices").getJSONObject(0).getJSONObject("message").optString("content")

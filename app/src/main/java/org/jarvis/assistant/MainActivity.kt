@@ -369,7 +369,7 @@ class MainActivity : AppCompatActivity() {
         val aiModel = findViewById<EditText>(R.id.aiModel)
         val aiKey = findViewById<EditText>(R.id.aiKey)
         findViewById<View>(R.id.btnPresetGemini).setOnClickListener {
-            aiUrl.setText("https://generativelanguage.googleapis.com/v1beta/openai"); aiModel.setText("gemini-2.5-flash")
+            aiUrl.setText("https://generativelanguage.googleapis.com/v1beta/openai"); aiModel.setText("gemini-3.8-flash")
             aiKey.requestFocus()
             toast("ضع مفتاح Gemini في خانة المفتاح ثم احفظ")
         }
