@@ -1,4 +1,6 @@
-# Builds Zol and runs the unit tests on every push. A tag such as v1.1 also publishes the APK on the Releases page.
+# Builds Zol and runs the unit tests on every push. Publishing a release: raise versionName in app/build.gradle.kts
+# and push to main. When there is no release for that version yet, this makes one (tag v<version>) with the APK.
+# A tag such as v1.3 pushed by hand does the same.
 # Signed releases: add the repository secrets KEYSTORE_BASE64 (base64 of the .jks), KEYSTORE_PASSWORD, KEY_ALIAS and
 # KEY_PASSWORD. Without them the release carries a debug-signed APK (fine for testing; updates need the same key).
 name: Build
@@ -39,30 +41,50 @@ jobs:
       - name: Debug APK
         run: ./gradlew --no-daemon assembleDebug
 
+      - name: Is this a new version?
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          echo "tag=v$V" >> "$GITHUB_OUTPUT"
+          C=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts)
+          echo "code=$C" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "publish=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/heads/main ]] && ! gh release view "v$V" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else echo "publish=false" >> "$GITHUB_OUTPUT"; fi
+
       - uses: actions/upload-artifact@v6
         with:
           name: zol-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
 
       - name: Release APK
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.version.outputs.publish == 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           ZOL_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           ZOL_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           ZOL_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          TAG: ${{ steps.version.outputs.tag }}
+          CODE: ${{ steps.version.outputs.code }}
         run: |
+          cp "fastlane/metadata/android/ar/changelogs/$CODE.txt" notes.md 2>/dev/null || echo "زول $TAG" > notes.md
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/zol.jks"
             export ZOL_KEYSTORE="$RUNNER_TEMP/zol.jks"
             ./gradlew --no-daemon assembleRelease
-            cp app/build/outputs/apk/release/app-release.apk "zol-${GITHUB_REF_NAME}.apk"
+            cp app/build/outputs/apk/release/app-release.apk "zol-${TAG}.apk"
           else
-            cp app/build/outputs/apk/debug/app-debug.apk "zol-${GITHUB_REF_NAME}-debug.apk"
+            cp app/build/outputs/apk/debug/app-debug.apk "zol-${TAG}-debug.apk"
           fi
 
       - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.version.outputs.publish == 'true'
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: زول ${{ steps.version.outputs.tag }}
           files: zol-*.apk
-          generate_release_notes: true
+          body_path: notes.md
