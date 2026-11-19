@@ -16,6 +16,8 @@ class CareAndAccessTest {
         assertEquals("Xiaomi / Redmi / POCO", Oem.guide("Xiaomi", "Redmi").brand)
         assertEquals("Oppo / Realme", Oem.guide("realme").brand)
         assertEquals("Samsung", Oem.guide("samsung").brand)
+        assertEquals("Honor", Oem.guide("HONOR").brand)
+        assertTrue(Oem.guide("HONOR").screens.first().first.startsWith("com.hihonor"))
         assertTrue(Oem.aggressive("itel"))
         assertFalse(Oem.aggressive("Google"))
         assertTrue(Oem.guide("Google").steps.isNotEmpty())
@@ -34,6 +36,14 @@ class CareAndAccessTest {
         s = ServiceHealth.started(s, 5_000_000, boot + 3_600_000)    // the phone restarted: fine
         assertEquals(1, s.stops.size)
         assertEquals(s, ServiceHealth.decode(ServiceHealth.encode(s)))
+        // an app update stops the service without asking: not counted
+        var u = ServiceHealth.started(ServiceHealth.State(false, 0, emptyList()), 1_000, boot, installed = 100)
+        u = ServiceHealth.started(u, 2_000, boot, installed = 200)
+        assertEquals(0, u.stops.size)
+        u = ServiceHealth.started(u, 3_000, boot, installed = 200)
+        assertEquals(1, u.stops.size)
+        assertEquals(u, ServiceHealth.decode(ServiceHealth.encode(u)))
+        assertEquals(ServiceHealth.State(true, 5, listOf(7L), 0), ServiceHealth.decode("true|5|7"))      // saved by 1.2
         assertEquals(0, ServiceHealth.stopsToday(s, 3_000_000 + ServiceHealth.DAY + 1))
     }
 

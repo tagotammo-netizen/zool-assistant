@@ -8,6 +8,7 @@ import android.app.NotificationChannel
 import android.app.RemoteInput
 import android.app.NotificationManager
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.IntentFilter
 import android.content.Intent
@@ -45,6 +46,7 @@ import android.os.SystemClock
 import android.provider.AlarmClock
 import android.provider.ContactsContract
 import android.speech.RecognitionListener
+import android.speech.RecognitionService
 import android.provider.Settings
 import android.speech.RecognitionSupport
 import android.speech.RecognitionSupportCallback
@@ -375,11 +377,57 @@ class JarvisService : AccessibilityService() {
             SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
         } else {
             onDevice = false
-            SpeechRecognizer.createSpeechRecognizer(this)
+            val chosen = prefs.getString("stt_service", null)?.let { ComponentName.unflattenFromString(it) }
+                ?.takeIf { it in recognitionServices() }
+            if (chosen != null) SpeechRecognizer.createSpeechRecognizer(this, chosen) else SpeechRecognizer.createSpeechRecognizer(this)
         }
         r.setRecognitionListener(listener)
         recognizer = r
     }
+
+    /** Every speech engine on the phone (Google, the maker's own...). */
+    private fun recognitionServices(): List<ComponentName> = try {
+        packageManager.queryIntentServices(Intent(RecognitionService.SERVICE_INTERFACE), 0)
+            .map { ComponentName(it.serviceInfo.packageName, it.serviceInfo.name) }
+    } catch (_: Exception) { emptyList() }
+
+    private var busyErrors = 0          // "too many requests" / "busy" in a row
+    private var busyWhisperUntil = 0L   // listening offline for a while because every engine refused
+
+    /**
+     * The engine keeps refusing ("too many requests"): try the phone's offline engine, then another speech engine,
+     * then the offline Whisper engine for a quarter of an hour.
+     */
+    private fun switchRecognizer() {
+        val services = recognitionServices()
+        val current = (prefs.getString("stt_service", null)
+            ?: android.provider.Settings.Secure.getString(contentResolver, "voice_recognition_service"))
+            ?.let { ComponentName.unflattenFromString(it) }
+        val at = services.indexOf(current)
+        val others = if (services.size < 2) emptyList() else List(services.size - 1) { services[(at + 1 + it).mod(services.size)] }
+            .filter { it != current }
+        when {
+            Build.VERSION.SDK_INT >= 33 && !onDevice && !prefs.getBoolean("offline_ready", false) &&
+                SpeechRecognizer.isOnDeviceRecognitionAvailable(this) && !triedOnDevice -> {
+                triedOnDevice = true
+                log("محرك الاستماع رافض الطلبات. بجرب محرك التلفون الداخلي.")
+                downloadOfflinePack()
+            }
+            others.isNotEmpty() -> {
+                val next = others.first()
+                prefs.edit().putString("stt_service", next.flattenToString()).apply()
+                val name = try { packageManager.getApplicationLabel(packageManager.getApplicationInfo(next.packageName, 0)) } catch (_: Exception) { next.packageName }
+                log("محرك الاستماع رافض الطلبات. غيّرتو لمحرك تاني: $name.")
+            }
+            whisper.missing().isEmpty() && !whisperFailed -> {
+                busyWhisperUntil = SystemClock.elapsedRealtime() + 15 * 60_000L
+                log("كل محركات الاستماع رافضة. بسمع بدون نت (Whisper) لمدة ربع ساعة.")
+            }
+            else -> log("محرك الاستماع رافض الطلبات. حأستنى شوية وأجرب تاني. لو استمر: أعد تشغيل التلفون.")
+        }
+    }
+
+    private var triedOnDevice = false
 
     private fun rebuildRecognizer() {
         try { recognizer?.destroy() } catch (_: Exception) {}
@@ -392,6 +440,12 @@ class JarvisService : AccessibilityService() {
             try {
                 val now = SystemClock.elapsedRealtime()
                 ecoCheck()
+                if (busyWhisperUntil != 0L && now > busyWhisperUntil) {
+                    busyWhisperUntil = 0L
+                    whisper.cancel()
+                    log("رجعت أجرب الاستماع العادي.")
+                    if (listening) resume(500)
+                }
                 if (netWhisper && online()) {
                     netWhisper = false
                     warnedNoNet = false
@@ -434,7 +488,8 @@ class JarvisService : AccessibilityService() {
     private var whisperFailed = false
 
     /** The experimental offline Whisper engine is used only when chosen in settings and while it works. */
-    private fun useWhisper() = (prefs.getString("engine", "google") == "whisper" || netWhisper) && !whisperFailed
+    private fun useWhisper() = (prefs.getString("engine", "google") == "whisper" || netWhisper ||
+        SystemClock.elapsedRealtime() < busyWhisperUntil) && !whisperFailed
 
     /** The internet dropped: listen with the offline engine (when its files are on the phone) until it comes back. */
     private var netWhisper = false
@@ -1338,7 +1393,7 @@ class JarvisService : AccessibilityService() {
     }
 
     private val listener = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) { lastActivity = SystemClock.elapsedRealtime() }
+        override fun onReadyForSpeech(params: Bundle?) { lastActivity = SystemClock.elapsedRealtime(); busyErrors = 0 }
         override fun onBeginningOfSpeech() { lastActivity = SystemClock.elapsedRealtime() }
         override fun onRmsChanged(rmsdB: Float) {}
         override fun onBufferReceived(buffer: ByteArray?) {}
@@ -1358,8 +1413,12 @@ class JarvisService : AccessibilityService() {
                     stopListening(false)
                 }
                 SpeechRecognizer.ERROR_TOO_MANY_REQUESTS, SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> {
-                    rebuildRecognizer()                       // drop every old session, wait, start one clean one
-                    resume(3_000)
+                    // drop every old session and wait longer each time (3 s, 6 s, 12 s ... a minute): retrying fast
+                    // is what keeps the engine refusing
+                    busyErrors++
+                    rebuildRecognizer()
+                    if (busyErrors == 4 || busyErrors == 10 || busyErrors == 18) switchRecognizer()
+                    resume(minOf(60_000L, 3_000L shl minOf(busyErrors - 1, 5)))
                 }
                 12, 13 -> {                       // language not supported / not downloaded: go back to the normal recogniser
                     if (!forceNormal || onDevice) log("حزمة الصوت العربية غير موجودة على الهاتف، أستخدم الاستماع العادي (يحتاج إنترنت).")
@@ -1747,7 +1806,8 @@ class JarvisService : AccessibilityService() {
     private fun bootTime() = System.currentTimeMillis() - SystemClock.elapsedRealtime()
 
     private fun noteStart() {
-        val s = ServiceHealth.started(ServiceHealth.decode(prefs.getString("svc_health", null)), System.currentTimeMillis(), bootTime())
+        val installed = try { packageManager.getPackageInfo(packageName, 0).lastUpdateTime } catch (_: Exception) { 0L }
+        val s = ServiceHealth.started(ServiceHealth.decode(prefs.getString("svc_health", null)), System.currentTimeMillis(), bootTime(), installed)
         prefs.edit().putString("svc_health", ServiceHealth.encode(s)).commit()
         val today = ServiceHealth.stopsToday(s, System.currentTimeMillis())
         if (today > 0 && s.stops.lastOrNull()?.let { System.currentTimeMillis() - it < 60_000 } == true)

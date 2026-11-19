@@ -1,0 +1,1 @@
+Zol 1.3: fixes listening stuck on 'too many requests' (longer waits, switches engine), Honor keep-alive guide, updates no longer counted as stops.
