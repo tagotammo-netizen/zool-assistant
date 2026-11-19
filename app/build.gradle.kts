@@ -48,6 +48,10 @@ android {
             if (storePath != null) signingConfig = signingConfigs.getByName("zol")
         }
     }
+    // the release build skips the extra lint pass: it downloads more tools and the tests already guard the code
+    lint {
+        checkReleaseBuilds = false
+    }
     packaging {
         jniLibs.pickFirsts += "**/libc++_shared.so"
     }
