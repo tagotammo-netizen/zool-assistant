@@ -94,6 +94,7 @@ class MainActivity : AppCompatActivity() {
         Triple(R.id.switchFall, "fall_on", false), Triple(R.id.switchVolumeKeys, "switch_volume", false),
         Triple(R.id.switchRemote, "remote_on", false), Triple(R.id.switchPronounce, "tts_pronounce", true),
         Triple(R.id.switchClips, "voice_clips", true), Triple(R.id.switchAutoUpdate, "auto_update", true),
+        Triple(R.id.switchCloudStt, "stt_cloud", false),
     )
 
     private val befores = listOf(R.id.beforeNow to 0, R.id.before10 to 10, R.id.before15 to 15)
@@ -343,6 +344,7 @@ class MainActivity : AppCompatActivity() {
                 if (id == R.id.switchBubble) JarvisService.instance?.let { if (checked) it.showBubble() else it.hideBubble() }
                 if (key.startsWith("prayer_")) { ProactiveReceiver.schedulePrayer(this); renderPrayer() }
                 if (key == "remote_on" && checked) enableRemote()
+                if (key == "stt_cloud") JarvisService.instance?.listeningChanged()
                 if (key == "fall_on" || key == "switch_volume" || key == "remote_on") { JarvisService.instance?.applyCareSettings(); renderCare() }
                 if (key == "azkar_alert") {
                     ProactiveReceiver.scheduleAzkar(this)
@@ -1064,7 +1066,7 @@ class MainActivity : AppCompatActivity() {
         "reply_style", "prayer_alert", "prayer_before", "prayer_city", "prayer_lat", "prayer_lon",
         "head_kb_auto", "head_kb_dwell", "quran_reciter", "quran_continue", "azkar_alert",
         "fall_on", "inactive_hours", "switch_mode", "switch_scan", "switch_volume", "aac_custom",
-        "tts_voice", "tts_rate", "tts_pitch", "tts_pronounce", "voice_clips", "tts_fix", "auto_update")
+        "tts_voice", "tts_rate", "tts_pitch", "tts_pronounce", "voice_clips", "tts_fix", "auto_update", "stt_cloud")
 
     private val exportSettingsFile = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) {

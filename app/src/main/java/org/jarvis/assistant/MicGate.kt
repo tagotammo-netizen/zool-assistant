@@ -13,12 +13,25 @@ import java.io.OutputStream
  * talking ([SpeechGate]) and then hands that sound — including the moment before, so "زول" is not cut — to the
  * speech recogniser through a pipe. The recogniser is asked once per sentence instead of every few seconds.
  */
-class MicGate(private val onSpeech: () -> Unit) {
+class MicGate(private val onSpeech: () -> Unit, private val onUtterance: (ByteArray) -> Unit = {}) {
 
     companion object {
         const val RATE = 16_000
         private const val FRAME = RATE / 50 * 2          // 20 ms of 16-bit mono
         private const val PRE_ROLL = RATE * 2 * 9 / 10   // 0.9 s
+        const val END_SILENCE_MS = 800L
+        const val MAX_SENTENCE_MS = 12_000L
+
+        /** A WAV file around 16 kHz mono 16-bit samples. */
+        fun wav(pcm: ByteArray): ByteArray {
+            val out = java.io.ByteArrayOutputStream(pcm.size + 44)
+            fun i32(v: Int) { out.write(v and 0xFF); out.write(v shr 8 and 0xFF); out.write(v shr 16 and 0xFF); out.write(v shr 24 and 0xFF) }
+            fun i16(v: Int) { out.write(v and 0xFF); out.write(v shr 8 and 0xFF) }
+            out.write("RIFF".toByteArray()); i32(36 + pcm.size); out.write("WAVE".toByteArray())
+            out.write("fmt ".toByteArray()); i32(16); i16(1); i16(1); i32(RATE); i32(RATE * 2); i16(2); i16(16)
+            out.write("data".toByteArray()); i32(pcm.size); out.write(pcm)
+            return out.toByteArray()
+        }
     }
 
     private var record: AudioRecord? = null
@@ -34,6 +47,12 @@ class MicGate(private val onSpeech: () -> Unit) {
         private set
 
     private val gate = SpeechGate()
+
+    /** Record whole sentences here instead of feeding a recogniser (for transcription in the cloud). */
+    @Volatile var captureMode = false
+    private var capture: java.io.ByteArrayOutputStream? = null
+    private var captureStart = 0L
+    private var quietSince = -1L
     private var wasQuiet = false
     private val preRoll = PreRoll(PRE_ROLL)
 
@@ -100,10 +119,29 @@ class MicGate(private val onSpeech: () -> Unit) {
                 try { out.write(buf, 0, n) } catch (_: Exception) { detach() }   // the recogniser closed its end
                 continue
             }
+            val rec = capture
+            if (rec != null) {                         // a sentence is being recorded: until a short silence
+                rec.write(buf, 0, n)
+                val level = SpeechGate.level(buf, n)
+                if (level < gate.threshold() * 0.7) { if (quietSince < 0) quietSince = now } else quietSince = -1L
+                val long = now - captureStart
+                if ((quietSince > 0 && now - quietSince > END_SILENCE_MS && long > 600) || long > MAX_SENTENCE_MS) {
+                    capture = null
+                    gate.reset()
+                    if (long >= 500) onUtterance(rec.toByteArray())
+                }
+                continue
+            }
             if (muted || now < quietUntil) { wasQuiet = true; continue }
             if (wasQuiet) { preRoll.take(); gate.reset(); wasQuiet = false }   // never send Zol's own voice
             preRoll.add(buf, n)
-            if (gate.feed(SpeechGate.level(buf, n), now)) onSpeech()
+            if (gate.feed(SpeechGate.level(buf, n), now)) {
+                if (captureMode) {
+                    capture = java.io.ByteArrayOutputStream(RATE * 2 * 4).also { it.write(preRoll.take()) }
+                    captureStart = now
+                    quietSince = -1L
+                } else onSpeech()
+            }
         }
     }
 }

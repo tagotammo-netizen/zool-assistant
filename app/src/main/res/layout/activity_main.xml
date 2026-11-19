@@ -716,6 +716,15 @@
                         android:text="محرك استماع كامل داخل التطبيق يعمل دون إنترنت. يحتاج ملفات النموذج." />
 
                     <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchCloudStt"
+                        style="@style/JSwitch"
+                        android:text="اسمع عن طريق Gemini (أدق للهجة السودانية، محتاج نت ومفتاح Gemini)" />
+
+                    <TextView
+                        style="@style/JNote"
+                        android:text="زول بيسمع بالمايك جوه التلفون، ويرسل الجملة بس (ما السكوت) لـ Gemini يكتبها. لو Google رفض الطلبات، زول بيتحول لـ Gemini براهو لمدة نص ساعة." />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
                         android:id="@+id/switchWhisper"
                         style="@style/JSwitch"
                         android:text="استخدام Whisper بدل محرك Google" />

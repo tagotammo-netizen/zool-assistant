@@ -1,0 +1,1 @@
+Zol 1.6: listening through Gemini (sentences recorded on the phone, only speech sent); automatic switch when Google says 'too many requests'.

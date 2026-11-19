@@ -457,6 +457,12 @@ class JarvisService : AccessibilityService() {
             try {
                 val now = SystemClock.elapsedRealtime()
                 ecoCheck()
+                if (cloudSttUntil != 0L && now > cloudSttUntil) {
+                    cloudSttUntil = 0L
+                    busyErrors = 0
+                    log("برجع أجرب استماع Google.")
+                    if (listening) listenOnce()
+                }
                 if (busyWhisperUntil != 0L && now > busyWhisperUntil) {
                     busyWhisperUntil = 0L
                     whisper.cancel()
@@ -496,6 +502,7 @@ class JarvisService : AccessibilityService() {
         lastActivity = SystemClock.elapsedRealtime()
         if (tts?.isSpeaking == true || clipPlayer != null) { ear?.muted = true; resume(500); return }   // not my own voice
         if (useWhisper()) { ear?.stop(); whisperListen(); return }
+        if (cloudStt()) { cloudListen(); return }
         if (useGate()) { gateListen(); return }
         val wait = noStartBefore - SystemClock.elapsedRealtime()
         if (wait > 0) { resume(wait); return }
@@ -523,7 +530,8 @@ class JarvisService : AccessibilityService() {
 
     /** Listen with Zol's own ear; the recogniser is asked only when someone talks. */
     private fun gateListen() {
-        val e = ear ?: MicGate { main.post { gateSession() } }.also { ear = it }
+        val e = ear ?: MicGate({ main.post { gateSession() } }, { pcm -> cloudHeard(pcm) }).also { ear = it }
+        e.captureMode = false
         if (!e.active && !e.start()) {
             gateFailed = true
             log("ما قدرت أفتح المايك بطريقتي، رجعت للطريقة العادية.")
@@ -585,6 +593,100 @@ class JarvisService : AccessibilityService() {
         resume(1500)
         return true
     }
+
+    // ------------------------------------------------------------------ listening through Gemini
+
+    private var cloudSttUntil = 0L               // Google refused: Gemini writes down what is said, for a while
+    @Volatile private var cloudBusy = false
+    private var cloudLastAt = 0L
+
+    /** Gemini can hear: the smart server in settings is Gemini, with a key. */
+    private fun cloudSttReady() = prefs.getString("ai_url", "").orEmpty().contains("generativelanguage.googleapis.com") &&
+        prefs.getString("ai_key", "").orEmpty().isNotBlank()
+
+    private fun cloudStt() = cloudSttReady() && (prefs.getBoolean("stt_cloud", false) || SystemClock.elapsedRealtime() < cloudSttUntil)
+
+    /** The ear records each sentence on the phone; only the sentence (not the silence) goes to Gemini. */
+    private fun cloudListen() {
+        cancelRecognition()
+        val e = ear ?: MicGate({ main.post { gateSession() } }, { pcm -> cloudHeard(pcm) }).also { ear = it }
+        e.captureMode = true
+        if (!e.active && !e.start()) {
+            cloudSttUntil = 0L
+            log("ما قدرت أفتح المايك للاستماع عن طريق Gemini.")
+            ear = null
+            return
+        }
+        e.muted = false
+        lastActivity = SystemClock.elapsedRealtime()
+    }
+
+    /** A recorded sentence (from the ear's thread). One request at a time, at most one every 1.5 s. */
+    private fun cloudHeard(pcm: ByteArray) {
+        val now = SystemClock.elapsedRealtime()
+        if (cloudBusy || now - cloudLastAt < 1_500 || !listening) return
+        cloudBusy = true
+        cloudLastAt = now
+        Thread {
+            val text = try { transcribe(pcm) } finally { cloudBusy = false }
+            main.post {
+                lastActivity = SystemClock.elapsedRealtime()
+                if (!text.isNullOrBlank() && listening) processResults(listOf(text.trim()))
+            }
+        }.start()
+    }
+
+    /** Gemini writes down the sentence, through the OpenAI-compatible endpoint (audio as WAV). Off the main thread. */
+    private fun transcribe(pcm: ByteArray): String? {
+        val base = prefs.getString("ai_url", "").orEmpty().trim().trimEnd('/')
+        val key = prefs.getString("ai_key", "").orEmpty().trim()
+        return try {
+            val audio = android.util.Base64.encodeToString(MicGate.wav(pcm), android.util.Base64.NO_WRAP)
+            val user = JSONArray()
+                .put(JSONObject().put("type", "text").put("text", "Transcribe this."))
+                .put(JSONObject().put("type", "input_audio").put("input_audio", JSONObject().put("data", audio).put("format", "wav")))
+            val body = JSONObject()
+                .put("model", prefs.getString("ai_model", "").orEmpty().trim().ifEmpty { "gemini-2.5-flash" })
+                .put("temperature", 0)
+                .put("max_tokens", 120)
+                .put("reasoning_effort", "none")
+                .put("messages", JSONArray()
+                    .put(JSONObject().put("role", "system").put("content",
+                        "Write down exactly the words spoken in the audio, in the language and dialect spoken (usually Sudanese Arabic, " +
+                        "sometimes English). Arabic in Arabic letters. Output only the words, no quotes, no translation, no comments. " +
+                        "If there is no clear speech, output nothing."))
+                    .put(JSONObject().put("role", "user").put("content", user)))
+            val con = URL("$base/chat/completions").openConnection() as HttpURLConnection
+            con.requestMethod = "POST"
+            con.doOutput = true
+            con.connectTimeout = 8000
+            con.readTimeout = 20000
+            con.setRequestProperty("Content-Type", "application/json")
+            con.setRequestProperty("Authorization", "Bearer $key")
+            con.outputStream.use { it.write(body.toString().toByteArray()) }
+            val code = con.responseCode
+            if (code == 429) {
+                con.disconnect()
+                main.post {
+                    log("Gemini وصل حدّو في الدقيقة/اليوم. برجع لاستماع Google.")
+                    cloudSttUntil = 0L
+                    if (listening) resume(2_000)
+                }
+                return null
+            }
+            if (code !in 200..299) throw Exception("HTTP $code")
+            val raw = con.inputStream.bufferedReader().use { it.readText() }
+            con.disconnect()
+            JSONObject(raw).getJSONArray("choices").getJSONObject(0).getJSONObject("message").optString("content")
+                .replace(Regex("[\"«»]"), "").trim()
+        } catch (e: Exception) {
+            main.post { log("ما قدرت أرسل الصوت لـ Gemini: ${e.message}") }
+            null
+        }
+    }
+
+    /** The listening engine was changed in settings: start again with it. */
+    fun listeningChanged() { main.post { if (listening) { cancelRecognition(); ear?.captureMode = false; listenOnce() } } }
 
     private fun cancelRecognition() {
         endGateSession()
@@ -1531,6 +1633,12 @@ class JarvisService : AccessibilityService() {
                     // is what keeps the engine refusing
                     busyErrors++
                     rebuildRecognizer()
+                    if (busyErrors == 2 && cloudSttReady() && !cloudStt()) {
+                        cloudSttUntil = SystemClock.elapsedRealtime() + 30 * 60_000L
+                        log("Google رافض الطلبات، بقيت أسمع عن طريق Gemini لمدة نص ساعة.")
+                        resume(300)
+                        return
+                    }
                     if (busyErrors == 4 || busyErrors == 10 || busyErrors == 18) switchRecognizer()
                     val wait = minOf(60_000L, 3_000L shl minOf(busyErrors - 1, 5))
                     noStartBefore = SystemClock.elapsedRealtime() + wait
