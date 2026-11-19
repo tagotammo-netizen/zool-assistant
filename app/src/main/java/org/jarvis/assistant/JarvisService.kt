@@ -785,12 +785,7 @@ class JarvisService : AccessibilityService() {
             val text = try { groqTranscribe(pcm) } finally { cloudBusy = false }
             main.post {
                 lastActivity = SystemClock.elapsedRealtime()
-                if (!text.isNullOrBlank() && listening) {
-                    val said = text.trim()
-                    if (Commands.stripWake(said) == null && SystemClock.elapsedRealtime() >= awakeUntil && pending == null)
-                        log("سمعت «${said.take(60)}» (بدون «${Commands.wakeWord}»، فما عملت حاجة).")
-                    processResults(listOf(said))
-                }
+                if (!text.isNullOrBlank() && listening) processResults(listOf(text.trim()))
             }
         }.start()
     }
@@ -811,6 +806,8 @@ class JarvisService : AccessibilityService() {
     }
 
     private var lastCloudLog = 0L
+    /** The full Whisper: slower than turbo, but clearly better with Arabic dialects. */
+    @Volatile private var sttWhisperModel = "whisper-large-v3"
 
     /** At most one line every 30 s about the cloud being busy, so the chat is not flooded. */
     private fun cloudLog(text: String) {
@@ -840,11 +837,13 @@ class JarvisService : AccessibilityService() {
             con.outputStream.use { out ->
                 fun field(name: String, value: String) =
                     out.write("--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n".toByteArray())
-                field("model", "whisper-large-v3-turbo")
+                field("model", sttWhisperModel)
                 field("response_format", "verbose_json")
                 field("temperature", "0")
-                if (prefs.getString("lang", "ar-SA").orEmpty().startsWith("ar")) field("language", "ar")
-                field("prompt", "${Commands.wakeWord}، كم الساعة، اتصل، افتح، اقفل، رسالة، واتساب")   // helps Whisper with the wake word
+                field("language", if (prefs.getString("lang", "ar-SA").orEmpty().startsWith("en")) "en" else "ar")   // guessing, Whisper took Sudanese for Icelandic
+                // Sudanese words Zol hears every day: Whisper writes what it expects, so tell it what to expect
+                field("prompt", "${Commands.wakeWord}، كم الساعة؟ ${Commands.wakeWord} اتصل بأمي. ${Commands.wakeWord} افتح واتساب. " +
+                    "${Commands.wakeWord} رد عليهو قول ليهو جاي. ${Commands.wakeWord} شغل القرآن. داير، عايز، هسع، شنو، وين، كدا، ياخ.")
                 out.write("--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"s.wav\"\r\nContent-Type: audio/wav\r\n\r\n".toByteArray())
                 out.write(MicGate.wav(pcm))
                 out.write("\r\n--$boundary--\r\n".toByteArray())
@@ -854,6 +853,10 @@ class JarvisService : AccessibilityService() {
                 val why = try { con.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty() } catch (_: Exception) { "" }
                 val msg = Regex("\"message\"\\s*:\\s*\"([^\"]{0,160})").find(why)?.groupValues?.get(1) ?: why.take(160)
                 con.disconnect()
+                if ((code == 404 || code == 400) && sttWhisperModel != "whisper-large-v3-turbo") {
+                    sttWhisperModel = "whisper-large-v3-turbo"        // the full model is not offered any more
+                    return groqTranscribe(pcm)
+                }
                 if (code == 429 || code >= 500) { cloudLog("Groq مزحوم (${if (code == 429) "وصل حدّو" else "$code"}). بحاول مع الجملة الجاية."); return null }
                 main.post {
                     cloudFailures++
@@ -2902,7 +2905,8 @@ class JarvisService : AccessibilityService() {
                 val why = try { con.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty() } catch (_: Exception) { "" }
                 val code = con.responseCode
                 con.disconnect()
-                if (code == 404 && !retried && followModelHint(why)) return cloudChat(system, user, maxTokens, true)
+                if (code == 404 && !retried && (followModelHint(why) || replaceChatModel(base, key)))
+                    return cloudChat(system, user, maxTokens, true)
                 throw Exception("HTTP $code " + (Regex("\"message\"\\s*:\\s*\"([^\"]{0,120})").find(why)?.groupValues?.get(1) ?: ""))
             }
             val raw = con.inputStream.bufferedReader().use { it.readText() }
@@ -2912,6 +2916,30 @@ class JarvisService : AccessibilityService() {
             log("تعذر الوصول إلى الوضع الذكي: ${e.message}")
             null
         }
+    }
+
+    /**
+     * The smart server says the model does not exist (Groq retires models): ask it which models it has, take the best
+     * one for chat, and keep it. True when the model was changed.
+     */
+    private fun replaceChatModel(base: String, key: String): Boolean {
+        val old = prefs.getString("ai_model", "").orEmpty().trim()
+        val ids = try {
+            val con = URL("$base/models").openConnection() as HttpURLConnection
+            con.connectTimeout = 8000
+            con.readTimeout = 10000
+            if (key.isNotEmpty()) con.setRequestProperty("Authorization", "Bearer $key")
+            if (base.contains("generativelanguage.googleapis.com")) con.setRequestProperty("x-goog-api-key", key)
+            val raw = if (con.responseCode in 200..299) con.inputStream.bufferedReader().use { it.readText() } else ""
+            con.disconnect()
+            val arr = if (raw.isEmpty()) JSONArray() else JSONObject(raw).optJSONArray("data") ?: JSONArray()
+            (0 until arr.length()).map { arr.getJSONObject(it).optString("id") }
+        } catch (_: Exception) { emptyList() }
+        val next = bestChatModel(ids) ?: return false
+        if (next == old) return false
+        prefs.edit().putString("ai_model", next).apply()
+        main.post { log("موديل «$old» ما بقى موجود في السيرفر، غيّرتو لـ «$next».") }
+        return true
     }
 
     /** Nothing understood the sentence: ask "تقصد؟", then the local model, then give up politely. */

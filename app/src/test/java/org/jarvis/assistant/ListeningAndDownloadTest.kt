@@ -61,6 +61,29 @@ class ListeningAndDownloadTest {
         assertEquals("افتح واتساب", whisperText("«افتح واتساب»", null))
     }
 
+    @Test fun otherLanguageIsDropped() {
+        assertEquals("", whisperText("Þú lofta hálf á whatsapp.", null))
+        assertEquals("زول ما það allir".let { "" }, whisperText("زول ما það allir", null))
+        assertEquals("زول افتح whatsapp", whisperText("زول افتح whatsapp", null))
+    }
+
+    @Test fun retiredModelIsReplaced() {
+        assertEquals("openai/gpt-oss-120b", bestChatModel(listOf("whisper-large-v3-turbo", "llama-3.1-8b-instant",
+            "meta-llama/llama-guard-4-12b", "openai/gpt-oss-120b", "playai-tts")))
+        assertEquals("llama-3.1-8b-instant", bestChatModel(listOf("whisper-large-v3", "llama-3.1-8b-instant")))
+        assertEquals(null, bestChatModel(listOf("whisper-large-v3")))
+    }
+
+    @Test fun statusNotificationsAreQuiet() {
+        assertTrue(RepeatFilter.isStatus("صور الدردشة نشطة"))
+        val f = RepeatFilter()
+        assertTrue(f.allow("m/أحمد", 0)); assertTrue(f.allow("m/أحمد", 1000)); assertTrue(f.allow("m/أحمد", 2000))
+        assertFalse(f.allow("m/أحمد", 3000))
+        assertFalse(f.allow("m/أحمد", 60 * 60_000L))
+        assertTrue(f.allow("m/أحمد", 2 * 60 * 60_000L))
+        assertTrue(f.allow("m/سارة", 3000))
+    }
+
     @Test fun loudness() {
         val pcm = ByteArray(4)
         pcm[0] = 0xE8.toByte(); pcm[1] = 0x03        // 1000

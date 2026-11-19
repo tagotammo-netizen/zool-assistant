@@ -194,5 +194,43 @@ fun whisperText(text: String, segments: List<Pair<String, Double>>?): String {
     val words = segments?.filter { it.second < 0.6 }?.joinToString(" ") { it.first } ?: text
     val clean = words.replace(Regex("[\"«»]"), "").replace(Regex("\\s+"), " ").trim()
     if (clean.length < 2 || whisperInventions.any { clean.contains(it, ignoreCase = true) }) return ""
+    if (clean.any { it in '\u00C0'..'\u024F' }) return ""        // þ ð é ö…: Whisper heard another language, not us
     return clean
+}
+
+/**
+ * The best model for chat from a server's list (OpenAI-style /models), when the chosen one was retired:
+ * no speech, safety, image or embedding models; larger general models first.
+ */
+fun bestChatModel(ids: List<String>): String? {
+    val skip = listOf("whisper", "guard", "tts", "embed", "playai", "orpheus", "vision", "image", "audio", "distil", "moderation", "compound")
+    val ok = ids.filter { id -> id.isNotBlank() && skip.none { id.contains(it, ignoreCase = true) } }
+    val order = listOf("gpt-oss-120b", "llama-4-maverick", "70b", "kimi", "qwen", "llama-4", "llama", "gpt-oss", "gemma", "mistral")
+    for (o in order) ok.firstOrNull { it.contains(o, ignoreCase = true) }?.let { return it }
+    return ok.firstOrNull()
+}
+
+/**
+ * Notifications that are not messages but keep coming back (Messenger's "chat heads active", "1 chat"): a sender
+ * whose notification comes more than 3 times in 2 minutes is kept quiet for an hour.
+ */
+class RepeatFilter(private val times: Int = 3, private val windowMs: Long = 120_000, private val quietMs: Long = 3_600_000) {
+    private val seen = HashMap<String, MutableList<Long>>()
+    private val quietUntil = HashMap<String, Long>()
+
+    /** True when this notification should be read aloud. */
+    fun allow(sender: String, now: Long): Boolean {
+        if ((quietUntil[sender] ?: 0L) > now) return false
+        val list = seen.getOrPut(sender) { ArrayList() }
+        list.removeAll { now - it > windowMs }
+        list.add(now)
+        if (list.size > times) { quietUntil[sender] = now + quietMs; list.clear(); return false }
+        return true
+    }
+
+    companion object {
+        /** Status notifications of chat apps, never a message from a person. */
+        fun isStatus(title: String): Boolean =
+            listOf("صور الدردشة", "رؤوس الدردشة", "Chat heads", "chat heads").any { title.contains(it, ignoreCase = true) }
+    }
 }

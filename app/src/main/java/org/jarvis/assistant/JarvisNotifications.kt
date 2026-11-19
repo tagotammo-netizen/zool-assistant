@@ -13,6 +13,7 @@ class JarvisNotifications : NotificationListenerService() {
 
     private var lastText = ""
     private var lastAt = 0L
+    private val repeats = RepeatFilter()
 
     private val messagingApps = setOf(
         "com.whatsapp", "com.whatsapp.w4b", "org.telegram.messenger", "com.facebook.orca", "org.thoughtcrime.securesms",
@@ -48,6 +49,7 @@ class JarvisNotifications : NotificationListenerService() {
         if (line == lastText && now - lastAt < 4_000) return          // the same message updated again
         lastText = line; lastAt = now
 
+        if (RepeatFilter.isStatus(title) || !repeats.allow(sbn.packageName + "/" + title, now)) return
         val who = title.ifEmpty { "رسالة" }
         service.noteNotification("$who: $line")
         val action = n.actions?.firstOrNull { it.remoteInputs?.isNotEmpty() == true }
