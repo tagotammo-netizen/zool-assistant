@@ -14,20 +14,24 @@ android {
         applicationId = "org.jarvis.assistant"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // Release signing comes from the environment (GitHub secrets), never from the repository.
-    val releaseKeystore = System.getenv("ZOL_KEYSTORE")
+    // One key signs every build, so the in-app update can replace the installed app. It comes from
+    // keystore.properties on the developer's computer, or from GitHub secrets in the cloud build; never from git.
+    val keyProps = java.util.Properties().apply {
+        rootProject.file("keystore.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+    }
+    val storePath = System.getenv("ZOL_KEYSTORE") ?: keyProps.getProperty("storeFile")
     signingConfigs {
-        if (releaseKeystore != null) create("release") {
-            storeFile = file(releaseKeystore)
-            storePassword = System.getenv("ZOL_KEYSTORE_PASSWORD")
-            keyAlias = System.getenv("ZOL_KEY_ALIAS")
-            keyPassword = System.getenv("ZOL_KEY_PASSWORD")
+        if (storePath != null) create("zol") {
+            storeFile = rootProject.file(storePath)
+            storePassword = System.getenv("ZOL_KEYSTORE_PASSWORD") ?: keyProps.getProperty("storePassword")
+            keyAlias = System.getenv("ZOL_KEY_ALIAS") ?: keyProps.getProperty("keyAlias")
+            keyPassword = System.getenv("ZOL_KEY_PASSWORD") ?: keyProps.getProperty("keyPassword")
         }
     }
 
@@ -36,7 +40,10 @@ android {
             optimization {
                 enable = false
             }
-            if (releaseKeystore != null) signingConfig = signingConfigs.getByName("release")
+            if (storePath != null) signingConfig = signingConfigs.getByName("zol")
+        }
+        debug {
+            if (storePath != null) signingConfig = signingConfigs.getByName("zol")
         }
     }
     packaging {

@@ -43,6 +43,8 @@ object Features {
             Tile("🧩", "معالج الإعداد", "خطوة بخطوة", special = "wizard"),
             Tile("🛡", "خلّي زول ما يقفل", "حسب نوع تلفونك", special = "keepalive"),
             Tile("🐞", "تقرير مشكلة", "أرسلو للمطوّر", special = "report"),
+            Tile("⬇", "تحديث زول", "شوف لو في إصدار جديد", special = "update"),
+            Tile("🗣", "صوت زول", "سجّل ردودو بصوت سوداني", special = "voice"),
         )),
     )
 

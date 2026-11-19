@@ -1480,6 +1480,161 @@
 
                 <View style="@style/JDivider" />
 
+                <!-- Zol's voice -->
+                <TextView
+                    android:id="@+id/secVoice"
+                    style="@style/JSection"
+                    android:drawableStart="@drawable/ic_mic"
+                    android:text="صوت زول" />
+
+                <LinearLayout style="@style/JSectionBody">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnPickVoice"
+                        style="@style/JTonal"
+                        android:layout_marginTop="0dp"
+                        android:text="اختار صوت النطق" />
+
+                    <TextView
+                        android:id="@+id/voiceName"
+                        style="@style/JNote"
+                        android:text="—" />
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="سرعة الكلام" />
+
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/rateGroup"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        app:selectionRequired="true"
+                        app:singleSelection="true">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/rateSlow"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="بطيء" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/rateMid"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="عادي" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/rateFast"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="سريع" />
+
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="طبقة الصوت" />
+
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/pitchGroup"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        app:selectionRequired="true"
+                        app:singleSelection="true">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/pitchLow"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="تخين" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/pitchMid"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="عادي" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/pitchHigh"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="رفيع" />
+
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchPronounce"
+                        style="@style/JSwitch"
+                        android:text="صحّح نطق الكلمات السودانية" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:hint="تصحيح النطق: كلمة=نطقها (كل واحدة في سطر)">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/ttsFix"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="textMultiLine"
+                            android:minLines="2" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="ردود زول بصوت سوداني حقيقي" />
+
+                    <TextView
+                        style="@style/JNote"
+                        android:text="سجّل الردود دي بصوتك أو بصوت زول من أهلك، وزول بيشغّل التسجيل بدل صوت المحرك. كل تسجيل لحدي 8 ثواني." />
+
+                    <LinearLayout
+                        android:id="@+id/voiceList"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:orientation="vertical" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchClips"
+                        style="@style/JSwitch"
+                        android:text="استعمل التسجيلات بدل صوت المحرك" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnVoiceTest"
+                        style="@style/JTonal"
+                        android:text="اسمع زول" />
+
+                </LinearLayout>
+
+                <View style="@style/JDivider" />
+
                 <!-- care, access and help -->
                 <TextView
                     android:id="@+id/secAccess"
@@ -1744,6 +1899,16 @@
                         android:id="@+id/btnReport"
                         style="@style/JTonal"
                         android:text="أرسل تقرير مشكلة" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnUpdate"
+                        style="@style/JTonal"
+                        android:text="تأكد من التحديثات" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchAutoUpdate"
+                        style="@style/JSwitch"
+                        android:text="شوف التحديثات براك مرة في اليوم" />
+
 
                     <TextView
                         style="@style/JNote"

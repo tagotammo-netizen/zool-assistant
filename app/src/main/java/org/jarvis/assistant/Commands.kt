@@ -68,7 +68,8 @@ sealed class Cmd {
     object Qibla : Cmd()
     data class HeadKeyboard(val show: Boolean) : Cmd()
     data class QuranDownload(val surahs: List<Int>, val reciter: String?) : Cmd()   // keep on the phone for no internet
-    data class Board(val show: Boolean) : Cmd()                  // the talking board           // the keyboard typed with the head pointer
+    data class Board(val show: Boolean) : Cmd()
+    object CheckUpdate : Cmd()                  // the talking board           // the keyboard typed with the head pointer
     object Train : Cmd()                                     // "دربني": voice training of the person's own dialect
     data class Teach(val phrase: String, val meaning: String) : Cmd()   // "لما اقول X يعني Y"
     object Hush : Cmd()                                      // "اسكت": stop talking / reading
@@ -725,6 +726,8 @@ object Commands {
                 has(t, "النوم", "نوم", "sleep") -> "sleep"
                 else -> null
             })
+        if (has(t, "حدث زول", "حدث التطبيق", "في تحديث", "فيه تحديث", "تحديث زول", "تحديث التطبيق", "اخر اصدار", "update zol", "check for updates"))
+            return Cmd.CheckUpdate
         if (has(t, "لوحه الكلام", "لوحه التواصل", "لوحه الحكي", "talking board"))
             return Cmd.Board(!has(t, "اقفل", "قفل", "اخفي", "شيل", "سكر", "close"))
         if (has(t, "نزل", "حمل", "download")) {

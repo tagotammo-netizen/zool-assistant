@@ -27,7 +27,8 @@ Phone and PC, no subscriptions, most features work offline.
 
 ## التنزيل | Download
 
-كل إصدار (tag يبدأ بـ v) يُبنى تلقائياً بـ GitHub Actions ويُنشر ملف APK في صفحة Releases.
+كل إصدار (tag يبدأ بـ v) يُبنى تلقائياً بـ GitHub Actions ويُنشر ملف APK في صفحة Releases، والتطبيق يعرض التحديث بنفسه.
+التوقيع: مفتاح واحد لكل النسخ (keystore.properties عند المطوّر، وأسرار KEYSTORE_BASE64 وKEYSTORE_PASSWORD وKEY_ALIAS وKEY_PASSWORD في GitHub)، ولا يُرفع المفتاح إلى git.
 
 ## التثبيت | Install
 

@@ -117,7 +117,7 @@ class FeaturesActivity : AppCompatActivity() {
 
     private fun press(tile: Features.Tile) {
         when (tile.special) {
-            "wizard", "keepalive", "report" -> {
+            "wizard", "keepalive", "report", "update", "voice" -> {
                 startActivity(Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_OPEN, tile.special)
                     .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
                 finish()

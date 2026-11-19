@@ -30,3 +30,4 @@ app/src/main/res/mipmap-*/johnny_fg.webp
 *.jks
 *.keystore
 keystore.properties
+zol-keystore-*.txt

@@ -6,6 +6,8 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.media.MediaPlayer
+import android.media.MediaRecorder
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.app.AlertDialog
@@ -72,6 +74,7 @@ class MainActivity : AppCompatActivity() {
         R.id.aiUrl to "ai_url", R.id.aiModel to "ai_model", R.id.aiKey to "ai_key",
         R.id.proReminders to "pro_reminders", R.id.proPeople to "pro_people", R.id.proBedtime to "pro_bedtime",
         R.id.prayerCity to "prayer_city", R.id.aacCustom to "aac_custom", R.id.remotePin to "remote_pin",
+        R.id.ttsFix to "tts_fix",
     )
 
     /** On/off settings: the switch, its key, and the value when it was never touched. */
@@ -89,7 +92,8 @@ class MainActivity : AppCompatActivity() {
         Triple(R.id.switchPrayer, "prayer_alert", false), Triple(R.id.switchHeadKb, "head_kb_auto", true),
         Triple(R.id.switchQuranContinue, "quran_continue", true), Triple(R.id.switchAzkar, "azkar_alert", false),
         Triple(R.id.switchFall, "fall_on", false), Triple(R.id.switchVolumeKeys, "switch_volume", false),
-        Triple(R.id.switchRemote, "remote_on", false),
+        Triple(R.id.switchRemote, "remote_on", false), Triple(R.id.switchPronounce, "tts_pronounce", true),
+        Triple(R.id.switchClips, "voice_clips", true), Triple(R.id.switchAutoUpdate, "auto_update", true),
     )
 
     private val befores = listOf(R.id.beforeNow to 0, R.id.before10 to 10, R.id.before15 to 15)
@@ -100,6 +104,12 @@ class MainActivity : AppCompatActivity() {
     private val scanSpeeds = listOf(R.id.scanFast to 1000L, R.id.scanMid to 1500L, R.id.scanSlow to 2500L)
     private val inactives = listOf(R.id.inactOff to 0, R.id.inact4 to 4, R.id.inact8 to 8, R.id.inact12 to 12)
     private var wizard: SetupWizard? = null
+    private val updates by lazy { UpdateManager(this) }
+    private val rates = listOf(R.id.rateSlow to 0.85f, R.id.rateMid to 1f, R.id.rateFast to 1.2f)
+    private val pitches = listOf(R.id.pitchLow to 0.85f, R.id.pitchMid to 1f, R.id.pitchHigh to 1.15f)
+    private var recorder: MediaRecorder? = null
+    private var recording: String? = null           // the reply being recorded
+    private var player: MediaPlayer? = null
     private val reciters = listOf(R.id.reciterAfs to "afs", R.id.reciterBasit to "basit", R.id.reciterNourin to "nourin")
     private val kbDwells = listOf(R.id.kbFast to 600L, R.id.kbMid to 900L, R.id.kbSlow to 1300L)
     private val headDwells = listOf(R.id.dwellShort to 1000L, R.id.dwellMid to 1500L, R.id.dwellLong to 2500L)
@@ -189,6 +199,8 @@ class MainActivity : AppCompatActivity() {
             "wizard" -> showWizard()
             "keepalive" -> openKeepAlive()
             "report" -> sendReport()
+            "update" -> updates.check(quiet = false)
+            "voice" -> { drawer.openDrawer(Gravity.RIGHT); openSection(findViewById(R.id.secVoice), true) }
         }
         intent?.removeExtra(EXTRA_OPEN)
     }
@@ -449,6 +461,19 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnWizard).setOnClickListener { drawer.closeDrawer(Gravity.RIGHT); showWizard() }
         findViewById<View>(R.id.btnKeepAlive).setOnClickListener { openKeepAlive() }
         findViewById<View>(R.id.btnReport).setOnClickListener { sendReport() }
+        findViewById<View>(R.id.btnUpdate).setOnClickListener { updates.check(quiet = false) }
+        findViewById<View>(R.id.btnPickVoice).setOnClickListener { pickVoice() }
+        findViewById<View>(R.id.btnVoiceTest).setOnClickListener {
+            saveSettings()
+            val service = JarvisService.instance ?: run { toast("فعّل خدمة زول أولاً"); return@setOnClickListener }
+            service.sayNow(service.voicePhrases().first() + " أنا زول، معاك. شنو الداير تعملو هسي؟")
+        }
+        findViewById<MaterialButtonToggleGroup>(R.id.rateGroup).addOnButtonCheckedListener { _, id, isChecked ->
+            if (isChecked && !loading) rates.firstOrNull { it.first == id }?.let { prefs.edit().putFloat("tts_rate", it.second).apply() }
+        }
+        findViewById<MaterialButtonToggleGroup>(R.id.pitchGroup).addOnButtonCheckedListener { _, id, isChecked ->
+            if (isChecked && !loading) pitches.firstOrNull { it.first == id }?.let { prefs.edit().putFloat("tts_pitch", it.second).apply() }
+        }
         findViewById<View>(R.id.btnAzkarEvening).setOnClickListener { readAzkar("evening") }
         findViewById<MaterialButtonToggleGroup>(R.id.headDockGroup).addOnButtonCheckedListener { _, id, isChecked ->
             if (isChecked && !loading) docks.firstOrNull { it.first == id }?.let { prefs.edit().putString("head_dock", it.second).apply() }
@@ -505,8 +530,13 @@ class MainActivity : AppCompatActivity() {
         findViewById<MaterialButtonToggleGroup>(R.id.scanSpeedGroup).check(scanSpeeds.minBy { kotlin.math.abs(it.second - scan) }.first)
         val idle = prefs.getInt("inactive_hours", 0)
         findViewById<MaterialButtonToggleGroup>(R.id.inactiveGroup).check(inactives.firstOrNull { it.second == idle }?.first ?: R.id.inactOff)
+        val rate = prefs.getFloat("tts_rate", 1f)
+        findViewById<MaterialButtonToggleGroup>(R.id.rateGroup).check(rates.minBy { kotlin.math.abs(it.second - rate) }.first)
+        val pitch = prefs.getFloat("tts_pitch", 1f)
+        findViewById<MaterialButtonToggleGroup>(R.id.pitchGroup).check(pitches.minBy { kotlin.math.abs(it.second - pitch) }.first)
         loading = false
         renderCare()
+        renderVoice()
         renderHeadButton()
         renderPrayer()
     }
@@ -756,6 +786,15 @@ class MainActivity : AppCompatActivity() {
         renderHeadButton()
         refresh()
         wizard?.refresh()
+        updates.resumeIfWaiting()
+        if (prefs.getBoolean("auto_update", true) && wizard == null) updates.check(quiet = true)
+    }
+
+    override fun onStop() {
+        stopRecording(keep = false)
+        player?.release()
+        player = null
+        super.onStop()
     }
 
     override fun onPause() {
@@ -1016,7 +1055,8 @@ class MainActivity : AppCompatActivity() {
         "head_speed", "head_dwell", "head_dwell_on", "head_blink", "head_invert", "head_smile", "head_dock", "wake_word",
         "reply_style", "prayer_alert", "prayer_before", "prayer_city", "prayer_lat", "prayer_lon",
         "head_kb_auto", "head_kb_dwell", "quran_reciter", "quran_continue", "azkar_alert",
-        "fall_on", "inactive_hours", "switch_mode", "switch_scan", "switch_volume", "aac_custom")
+        "fall_on", "inactive_hours", "switch_mode", "switch_scan", "switch_volume", "aac_custom",
+        "tts_voice", "tts_rate", "tts_pitch", "tts_pronounce", "voice_clips", "tts_fix", "auto_update")
 
     private val exportSettingsFile = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) {
@@ -1043,7 +1083,7 @@ class MainActivity : AppCompatActivity() {
                         is Boolean -> edit.putBoolean(key, value)
                         is String -> edit.putString(key, value)
                         is Number -> when (key) {
-                            "head_speed", "prayer_lat", "prayer_lon" -> edit.putFloat(key, value.toFloat())
+                            "head_speed", "prayer_lat", "prayer_lon", "tts_rate", "tts_pitch" -> edit.putFloat(key, value.toFloat())
                             "prayer_before", "inactive_hours" -> edit.putInt(key, value.toInt())
                             "head_dwell", "head_kb_dwell", "switch_scan" -> edit.putLong(key, value.toLong())
                             else -> continue
@@ -1302,6 +1342,118 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+
+    // ---- Zol's voice: the engine's voice, and replies recorded in a Sudanese voice
+
+    private fun voiceFile(text: String) = java.io.File(java.io.File(filesDir, "voice").apply { mkdirs() }, VoicePack.fileName(text))
+
+    private fun pickVoice() {
+        val service = JarvisService.instance ?: run { toast("فعّل خدمة زول أولاً"); return }
+        val voices = service.arabicVoices()
+        if (voices.isEmpty()) { toast("ما لقيت أصوات عربية. نزّل صوت العربي من إعدادات النطق"); openVoiceSettings(true); return }
+        val labels = (listOf("الصوت الافتراضي") + voices.map { it.second }).toTypedArray()
+        AlertDialog.Builder(this).setTitle("اختار صوت زول").setItems(labels) { _, i ->
+            if (i == 0) prefs.edit().remove("tts_voice").apply() else prefs.edit().putString("tts_voice", voices[i - 1].first).apply()
+            renderVoice()
+            service.sayNow(service.voicePhrases()[0] + " ده صوتي الجديد.")
+        }.show()
+    }
+
+    private fun renderVoice() {
+        val chosen = prefs.getString("tts_voice", null)
+        findViewById<TextView>(R.id.voiceName).text = if (chosen == null) "الصوت الافتراضي لمحرك النطق" else "الصوت: $chosen"
+        val box = findViewById<LinearLayout>(R.id.voiceList)
+        box.removeAllViews()
+        val phrases = JarvisService.instance?.voicePhrases()
+            ?: VoicePack.DEFAULTS.map { if (prefs.getString("reply_style", "sudani") != "fusha") Sudani.convert(it) else it }
+        for (phrase in phrases) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            val has = voiceFile(phrase).length() > 0
+            row.addView(TextView(this).apply {
+                text = (if (has) "✓ " else "") + phrase
+                textSize = 14f
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.on_surface))
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            fun small(label: String, enabled: Boolean, click: () -> Unit) = TextView(this).apply {
+                text = label
+                textSize = 18f
+                gravity = Gravity.CENTER
+                alpha = if (enabled) 1f else 0.3f
+                isEnabled = enabled
+                isClickable = enabled
+                setBackgroundResource(R.drawable.bg_chip)
+                contentDescription = label
+                setOnClickListener { click() }
+            }
+            val busy = recording == phrase
+            row.addView(small(if (busy) "⏹" else "🎙", recording == null || busy) { if (busy) stopRecording(true) else startRecording(phrase) },
+                LinearLayout.LayoutParams(dp(44), dp(40)).apply { marginStart = dp(6) })
+            row.addView(small("▶", has && recording == null) { playRecording(phrase) },
+                LinearLayout.LayoutParams(dp(44), dp(40)).apply { marginStart = dp(6) })
+            row.addView(small("🗑", has && recording == null) { voiceFile(phrase).delete(); renderVoice() },
+                LinearLayout.LayoutParams(dp(44), dp(40)).apply { marginStart = dp(6) })
+            box.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+        }
+    }
+
+    private fun startRecording(phrase: String) {
+        if (!granted(Manifest.permission.RECORD_AUDIO)) { askPermissions(); return }
+        JarvisService.instance?.freeMic()
+        val tmp = java.io.File(cacheDir, "rec.m4a")
+        try {
+            @Suppress("DEPRECATION")
+            val r = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else MediaRecorder()
+            r.setAudioSource(MediaRecorder.AudioSource.MIC)
+            r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            r.setAudioSamplingRate(44100)
+            r.setAudioEncodingBitRate(96_000)
+            r.setMaxDuration(8_000)
+            r.setOutputFile(tmp.path)
+            r.setOnInfoListener { _, what, _ -> if (what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED) ui.post { stopRecording(true) } }
+            r.prepare()
+            r.start()
+            recorder = r
+            recording = phrase
+            toast("قول: «$phrase» وبعدين اضغط ⏹")
+        } catch (e: Exception) {
+            recorder = null
+            recording = null
+            JarvisService.instance?.giveBackMic()
+            toast("ما قدرت أسجّل: ${e.message}")
+        }
+        renderVoice()
+    }
+
+    private fun stopRecording(keep: Boolean) {
+        val r = recorder ?: return
+        val phrase = recording
+        recorder = null
+        recording = null
+        val tmp = java.io.File(cacheDir, "rec.m4a")
+        val ok = try { r.stop(); true } catch (_: Exception) { false }
+        try { r.release() } catch (_: Exception) {}
+        JarvisService.instance?.giveBackMic()
+        if (keep && ok && phrase != null && tmp.length() > 2000) {
+            val target = voiceFile(phrase)
+            target.delete()
+            if (tmp.renameTo(target) || (tmp.copyTo(target, true).exists() && tmp.delete())) { toast("اتسجّل ✓"); playRecording(phrase) }
+        } else if (keep) toast("التسجيل قصير شديد، جرّب تاني")
+        tmp.delete()
+        if (!isFinishing) renderVoice()
+    }
+
+    private fun playRecording(phrase: String) {
+        player?.release()
+        player = try {
+            MediaPlayer().apply {
+                setDataSource(voiceFile(phrase).path)
+                setOnCompletionListener { it.release(); if (player === it) player = null }
+                prepare()
+                start()
+            }
+        } catch (_: Exception) { null }
+    }
 
     // ---- the guided setup, keeping Zol alive, the caregiver channel and the problem report
 

@@ -30,7 +30,9 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.media.MediaPlayer
 import android.net.ConnectivityManager
+import java.io.File
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.BatteryManager
@@ -268,6 +270,8 @@ class JarvisService : AccessibilityService() {
         head?.stop()
         head = null
         quran?.stop()
+        clipPlayer?.let { try { it.release() } catch (_: Exception) {} }
+        clipPlayer = null
         stopQibla()
         stopFall()
         switches?.stop()
@@ -2477,16 +2481,83 @@ class JarvisService : AccessibilityService() {
                 warnedVoice = true
                 log("لا أستطيع نطق العربية: صوتها غير منزّل في الهاتف.")
             }
+            // a reply recorded in a Sudanese voice is played instead of the engine
+            val clip = if (arabic && prefs.getBoolean("voice_clips", true)) voiceFile(text).takeIf { it.length() > 0 } else null
+            if (clip != null && (!add || (engine.isSpeaking != true && clipPlayer == null)) && playClip(clip)) return
             engine.language = if (arabic) Locale.forLanguageTag("ar") else Locale.US
+            if (arabic) prefs.getString("tts_voice", null)?.let { name ->
+                try { engine.voices?.firstOrNull { it.name == name }?.let { engine.voice = it } } catch (_: Exception) {}
+            }
+            engine.setSpeechRate(prefs.getFloat("tts_rate", 1f))
+            engine.setPitch(prefs.getFloat("tts_pitch", 1f))
+            val spoken = if (arabic && prefs.getBoolean("tts_pronounce", true)) VoicePack.pronounce(text, pronounceFixes()) else text
             val mode = if (add) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH
             if (quran?.playing == true) quran?.duck(true)
-            if (engine.speak(text, mode, null, "jarvis") == TextToSpeech.SUCCESS) return
+            if (engine.speak(spoken, mode, null, "jarvis") == TextToSpeech.SUCCESS) return
             log("تعذّر النطق. تحقق من محرك الصوت في إعدادات الهاتف.")
         } else {
             log("محرك الصوت غير جاهز بعد.")
         }
         resume(300)                                       // no voice available: just keep listening
     }
+
+    // ------------------------------------------------------------------ Zol's own (Sudanese) voice
+
+    private var clipPlayer: MediaPlayer? = null
+
+    private fun pronounceFixes(): Map<String, String> =
+        VoicePack.PRONOUNCE + VoicePack.parseFixes(prefs.getString("tts_fix", "").orEmpty())
+
+    fun voiceFile(text: String): File = File(File(filesDir, "voice").apply { mkdirs() }, VoicePack.fileName(text))
+
+    /** False when the recording cannot be played (then the engine says it). */
+    private fun playClip(file: File): Boolean {
+        try { tts?.stop() } catch (_: Exception) {}
+        clipPlayer?.let { try { it.release() } catch (_: Exception) {} }
+        clipPlayer = null
+        return try {
+            val mp = MediaPlayer()
+            mp.setAudioAttributes(android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())
+            mp.setDataSource(file.path)
+            mp.setOnCompletionListener {
+                it.release()
+                if (clipPlayer === it) clipPlayer = null
+                quran?.duck(false)
+                resume(300)
+                if (reading) scheduleReadAdvance()
+            }
+            mp.prepare()
+            if (quran?.playing == true) quran?.duck(true)
+            lastActivity = SystemClock.elapsedRealtime()
+            mp.start()
+            clipPlayer = mp
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** The replies the person can record, written the way Zol says them now (Sudanese or standard). */
+    fun voicePhrases(): List<String> = VoicePack.DEFAULTS.map { if (sudani()) Sudani.convert(it) else it }
+
+    /** Arabic voices of the phone's engine: name and a short description. */
+    fun arabicVoices(): List<Pair<String, String>> = try {
+        tts?.voices.orEmpty().filter { it.locale.language == "ar" }
+            .sortedWith(compareBy({ it.isNetworkConnectionRequired }, { -it.quality }))
+            .map { v ->
+                val where = v.locale.displayCountry.ifBlank { v.locale.country }
+                v.name to (where.ifBlank { "عربي" } + (if (v.isNetworkConnectionRequired) " • محتاج نت" else "") + " • " + v.name.takeLast(14))
+            }
+    } catch (_: Exception) { emptyList() }
+
+    fun sayNow(text: String) { main.post { say(text) } }
+
+    /** Recording in the app: the microphone must be free. */
+    private var micWasOn = false
+    fun freeMic() { micWasOn = listening; if (listening) stopListening(false) }
+    fun giveBackMic() { if (micWasOn) startListening(false); micWasOn = false }
 
     private fun ask(question: String, seconds: Int = 25, onNo: (() -> String)? = null, action: () -> String): String {
         pending = action
@@ -2656,6 +2727,11 @@ class JarvisService : AccessibilityService() {
             is Cmd.Azkar -> readAzkar(c.kind)
             Cmd.Qibla -> qibla()
             is Cmd.QuranDownload -> downloadQuran(c.surahs, c.reciter)
+            Cmd.CheckUpdate -> {
+                startActivity(Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_OPEN, "update")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+                t("بشوف لو في تحديث.", "Checking for an update.")
+            }
             is Cmd.Board -> if (c.show) showBoard() else { hideBoard(); ok }
             is Cmd.HeadKeyboard -> if (c.show) openHeadKeyboard() else { hideHeadKeyboard(); t("قفلت الكيبورد.", "Keyboard closed.") }
             Cmd.Emergency -> emergency()
@@ -2671,6 +2747,8 @@ class JarvisService : AccessibilityService() {
             is Cmd.DeleteReminder -> deleteReminder(c.name)
             is Cmd.Teach -> teach(c.phrase, c.meaning)
             Cmd.Hush -> {
+                clipPlayer?.let { try { it.stop(); it.release() } catch (_: Exception) {} }
+                clipPlayer = null
                 val talking = tts?.isSpeaking == true || reading
                 if (!talking) quran?.pause()
                 stopQibla()
