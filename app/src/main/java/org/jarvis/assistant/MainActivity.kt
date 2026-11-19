@@ -71,7 +71,7 @@ class MainActivity : AppCompatActivity() {
         R.id.scenesBox to "scenes", R.id.secretBox to "secret", R.id.phrasesBox to "phrases", R.id.waCc to "wa_cc",
         R.id.aiUrl to "ai_url", R.id.aiModel to "ai_model", R.id.aiKey to "ai_key",
         R.id.proReminders to "pro_reminders", R.id.proPeople to "pro_people", R.id.proBedtime to "pro_bedtime",
-        R.id.prayerCity to "prayer_city",
+        R.id.prayerCity to "prayer_city", R.id.aacCustom to "aac_custom", R.id.remotePin to "remote_pin",
     )
 
     /** On/off settings: the switch, its key, and the value when it was never touched. */
@@ -88,12 +88,18 @@ class MainActivity : AppCompatActivity() {
         Triple(R.id.switchHeadInvert, "head_invert", false), Triple(R.id.switchHeadSmile, "head_smile", false),
         Triple(R.id.switchPrayer, "prayer_alert", false), Triple(R.id.switchHeadKb, "head_kb_auto", true),
         Triple(R.id.switchQuranContinue, "quran_continue", true), Triple(R.id.switchAzkar, "azkar_alert", false),
+        Triple(R.id.switchFall, "fall_on", false), Triple(R.id.switchVolumeKeys, "switch_volume", false),
+        Triple(R.id.switchRemote, "remote_on", false),
     )
 
     private val befores = listOf(R.id.beforeNow to 0, R.id.before10 to 10, R.id.before15 to 15)
     private val docks = listOf(R.id.dockLeft to "left", R.id.dockRight to "right", R.id.dockOff to "off")
 
     private val headSpeeds = listOf(R.id.headSlow to 0.6f, R.id.headNormal to 1f, R.id.headFast to 1.7f)
+    private val switchModes = listOf(R.id.swOff to "off", R.id.swTwo to "two", R.id.swOne to "one")
+    private val scanSpeeds = listOf(R.id.scanFast to 1000L, R.id.scanMid to 1500L, R.id.scanSlow to 2500L)
+    private val inactives = listOf(R.id.inactOff to 0, R.id.inact4 to 4, R.id.inact8 to 8, R.id.inact12 to 12)
+    private var wizard: SetupWizard? = null
     private val reciters = listOf(R.id.reciterAfs to "afs", R.id.reciterBasit to "basit", R.id.reciterNourin to "nourin")
     private val kbDwells = listOf(R.id.kbFast to 600L, R.id.kbMid to 900L, R.id.kbSlow to 1300L)
     private val headDwells = listOf(R.id.dwellShort to 1000L, R.id.dwellMid to 1500L, R.id.dwellLong to 2500L)
@@ -164,7 +170,7 @@ class MainActivity : AppCompatActivity() {
         input.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEND) { send(); true } else false
         }
-        askPermissions()
+        if (!prefs.getBoolean("wizard_done", false) && nextStep() != null) drawer.post { showWizard() } else askPermissions()
     }
 
     /**
@@ -195,7 +201,7 @@ class MainActivity : AppCompatActivity() {
             toast("نُسخ الخطأ")
         })
         box.addView(button("تشغيل التطبيق") {
-            prefs.edit().remove("last_crash").commit()
+            prefs.edit().remove("last_crash").putString("crash_report", text.take(4000)).commit()
             recreate()
         })
         box.addView(TextView(this).apply {
@@ -302,6 +308,8 @@ class MainActivity : AppCompatActivity() {
                 if (id == R.id.switchReadNotifs && checked && !notificationAccess()) openNotificationAccess()
                 if (id == R.id.switchBubble) JarvisService.instance?.let { if (checked) it.showBubble() else it.hideBubble() }
                 if (key.startsWith("prayer_")) { ProactiveReceiver.schedulePrayer(this); renderPrayer() }
+                if (key == "remote_on" && checked) enableRemote()
+                if (key == "fall_on" || key == "switch_volume" || key == "remote_on") { JarvisService.instance?.applyCareSettings(); renderCare() }
                 if (key == "azkar_alert") {
                     ProactiveReceiver.scheduleAzkar(this)
                     if (checked && !exactAlarms()) toast("اسمح بالتذكير الدقيق حتى يجي التذكير في وقته")
@@ -390,6 +398,37 @@ class MainActivity : AppCompatActivity() {
             if (isChecked && !loading) kbDwells.firstOrNull { it.first == id }?.let { prefs.edit().putLong("head_kb_dwell", it.second).apply() }
         }
         findViewById<View>(R.id.btnAzkarMorning).setOnClickListener { readAzkar("morning") }
+        findViewById<MaterialButtonToggleGroup>(R.id.switchModeGroup).addOnButtonCheckedListener { _, id, isChecked ->
+            if (!isChecked || loading) return@addOnButtonCheckedListener
+            switchModes.firstOrNull { it.first == id }?.let { prefs.edit().putString("switch_mode", it.second).apply() }
+            JarvisService.instance?.applyCareSettings()
+            if (id != R.id.swOff) toast("لو الأزرار ما اشتغلت: اقفل خدمة زول وافتحها تاني من إمكانية الوصول")
+        }
+        findViewById<MaterialButtonToggleGroup>(R.id.scanSpeedGroup).addOnButtonCheckedListener { _, id, isChecked ->
+            if (!isChecked || loading) return@addOnButtonCheckedListener
+            scanSpeeds.firstOrNull { it.first == id }?.let { prefs.edit().putLong("switch_scan", it.second).apply() }
+            JarvisService.instance?.applyCareSettings()
+        }
+        findViewById<MaterialButtonToggleGroup>(R.id.inactiveGroup).addOnButtonCheckedListener { _, id, isChecked ->
+            if (!isChecked || loading) return@addOnButtonCheckedListener
+            inactives.firstOrNull { it.first == id }?.let { prefs.edit().putInt("inactive_hours", it.second).apply() }
+            JarvisService.instance?.applyCareSettings()
+        }
+        findViewById<View>(R.id.btnBoard).setOnClickListener {
+            val service = JarvisService.instance ?: run { toast("فعّل خدمة زول أولاً"); return@setOnClickListener }
+            saveSettings()
+            service.showBoard()
+            drawer.closeDrawer(Gravity.RIGHT)
+        }
+        findViewById<View>(R.id.btnQuranDownload).setOnClickListener {
+            val service = JarvisService.instance ?: run { toast("فعّل خدمة زول أولاً"); return@setOnClickListener }
+            service.downloadEssentialQuran()
+            toast("بدأ التنزيل، زول بيقول ليك لما يخلص")
+        }
+        findViewById<View>(R.id.btnShareRemote).setOnClickListener { shareRemote() }
+        findViewById<View>(R.id.btnWizard).setOnClickListener { drawer.closeDrawer(Gravity.RIGHT); showWizard() }
+        findViewById<View>(R.id.btnKeepAlive).setOnClickListener { openKeepAlive() }
+        findViewById<View>(R.id.btnReport).setOnClickListener { sendReport() }
         findViewById<View>(R.id.btnAzkarEvening).setOnClickListener { readAzkar("evening") }
         findViewById<MaterialButtonToggleGroup>(R.id.headDockGroup).addOnButtonCheckedListener { _, id, isChecked ->
             if (isChecked && !loading) docks.firstOrNull { it.first == id }?.let { prefs.edit().putString("head_dock", it.second).apply() }
@@ -440,7 +479,14 @@ class MainActivity : AppCompatActivity() {
         findViewById<MaterialButtonToggleGroup>(R.id.headSpeedGroup).check(headSpeeds.minBy { kotlin.math.abs(it.second - speed) }.first)
         val dwell = prefs.getLong("head_dwell", 1500L)
         findViewById<MaterialButtonToggleGroup>(R.id.headDwellGroup).check(headDwells.minBy { kotlin.math.abs(it.second - dwell) }.first)
+        findViewById<MaterialButtonToggleGroup>(R.id.switchModeGroup)
+            .check(switchModes.firstOrNull { it.second == prefs.getString("switch_mode", "off") }?.first ?: R.id.swOff)
+        val scan = prefs.getLong("switch_scan", 1500L)
+        findViewById<MaterialButtonToggleGroup>(R.id.scanSpeedGroup).check(scanSpeeds.minBy { kotlin.math.abs(it.second - scan) }.first)
+        val idle = prefs.getInt("inactive_hours", 0)
+        findViewById<MaterialButtonToggleGroup>(R.id.inactiveGroup).check(inactives.firstOrNull { it.second == idle }?.first ?: R.id.inactOff)
         loading = false
+        renderCare()
         renderHeadButton()
         renderPrayer()
     }
@@ -584,6 +630,10 @@ class MainActivity : AppCompatActivity() {
                 if (granted(Manifest.permission.RECORD_AUDIO)) "مسموح" else "امنح الإذن") { askPermissions() },
             Check("الاتصال والرسائل", allPermissions(), if (allPermissions()) "مسموح" else "امنح الأذونات") { askPermissions() },
             Check("العمل في الخلفية", batteryOk(), if (batteryOk()) "مسموح" else "اسمح") { requestBatteryExemption() },
+            (service?.stopsToday() ?: 0).let { stops ->
+                Check("الاستمرارية", if (service == null) null else stops == 0,
+                    if (stops == 0) "ما وقف اليوم" else "وقف $stops مرة اليوم") { openKeepAlive() }
+            },
             voiceCheck(service),
             Check("قراءة الإشعارات", if (readNotifs) notificationAccess() else null,
                 when { !readNotifs -> "متوقفة"; notificationAccess() -> "تعمل"; else -> "امنح الإذن" }) { openNotificationAccess() },
@@ -685,6 +735,7 @@ class MainActivity : AppCompatActivity() {
         drawer.post { closeDrawerOnBack.isEnabled = drawerOpen() }
         renderHeadButton()
         refresh()
+        wizard?.refresh()
     }
 
     override fun onPause() {
@@ -944,7 +995,8 @@ class MainActivity : AppCompatActivity() {
         "pro_on", "pro_reminders", "pro_people", "pro_care", "pro_morning", "pro_battery", "pro_bedtime",
         "head_speed", "head_dwell", "head_dwell_on", "head_blink", "head_invert", "head_smile", "head_dock", "wake_word",
         "reply_style", "prayer_alert", "prayer_before", "prayer_city", "prayer_lat", "prayer_lon",
-        "head_kb_auto", "head_kb_dwell", "quran_reciter", "quran_continue", "azkar_alert")
+        "head_kb_auto", "head_kb_dwell", "quran_reciter", "quran_continue", "azkar_alert",
+        "fall_on", "inactive_hours", "switch_mode", "switch_scan", "switch_volume", "aac_custom")
 
     private val exportSettingsFile = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) {
@@ -972,8 +1024,8 @@ class MainActivity : AppCompatActivity() {
                         is String -> edit.putString(key, value)
                         is Number -> when (key) {
                             "head_speed", "prayer_lat", "prayer_lon" -> edit.putFloat(key, value.toFloat())
-                            "prayer_before" -> edit.putInt(key, value.toInt())
-                            "head_dwell", "head_kb_dwell" -> edit.putLong(key, value.toLong())
+                            "prayer_before", "inactive_hours" -> edit.putInt(key, value.toInt())
+                            "head_dwell", "head_kb_dwell", "switch_scan" -> edit.putLong(key, value.toLong())
                             else -> continue
                         }
                         else -> continue
@@ -1230,6 +1282,124 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+
+    // ---- the guided setup, keeping Zol alive, the caregiver channel and the problem report
+
+    private fun wizardSteps(): List<SetupWizard.Step> {
+        val service = JarvisService.instance
+        val oem = Oem.guide(Build.MANUFACTURER, Build.BRAND)
+        val list = mutableListOf(
+            SetupWizard.Step("فعّل خدمة زول",
+                "زول محتاج إذن «إمكانية الوصول» عشان يضغط ويقرا الشاشة بدلك. حيفتح ليك الإعدادات: اختار «زول»، فعّلو، ووافق. بعدين ارجع هنا.",
+                "افتح إعدادات إمكانية الوصول", { JarvisService.instance != null }) {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            },
+            SetupWizard.Step("الأذونات",
+                "زول محتاج الميكروفون عشان يسمعك، وجهات الاتصال والمكالمات والرسائل عشان يتصل ويرسل، والموقع عشان المرافق وأوقات الصلاة. وافق على كل الأسئلة الجاية.",
+                "امنح الأذونات", { allPermissions() }) { askPermissions() },
+            SetupWizard.Step("خليهو يشتغل في الخلفية",
+                "عشان زول يفضل يسمعك والشاشة مقفولة، اسمح ليهو يشتغل بدون قيود البطارية.",
+                "اسمح بالعمل في الخلفية", { batteryOk() }) { requestBatteryExemption() },
+        )
+        if (Oem.aggressive(Build.MANUFACTURER, Build.BRAND)) list.add(SetupWizard.Step("خطوة مهمة في تلفون ${oem.brand}",
+            "التلفون ده بيقفل التطبيقات البتشتغل في الخلفية. اعمل الآتي:\n" + oem.steps.joinToString("\n") { "• $it" },
+            "افتح الإعدادات", { prefs.getBoolean("oem_done", false) }, confirm = "عملتها ✓",
+            onConfirm = { prefs.edit().putBoolean("oem_done", true).apply() }) { openKeepAlive(dialog = false) })
+        list.add(SetupWizard.Step("التذكير في وقتو",
+            "عشان المنبهات والتذكيرات وأوقات الصلاة تجي في وقتها بالظبط، اسمح بالتذكير الدقيق.",
+            "اسمح بالتذكير الدقيق", { exactAlarms() }, optional = true) { openExactAlarms() })
+        list.add(SetupWizard.Step("صوت العربي",
+            "عشان زول يتكلم معاك بالعربي، لازم صوت العربي يكون منزّل في محرك النطق. لو سمعت الكلام ده، غالباً هو جاهز.",
+            "افتح إعدادات النطق", { voiceCheck(JarvisService.instance).ok == true }, optional = true) {
+            openVoiceSettings(JarvisService.instance?.voiceReady == true)
+        })
+        list.add(SetupWizard.Step("جرّب زول",
+            "اضغط الزر، وبعدين قول: «${Commands.wakeWord}»، وبعدها «كم الساعة». لو رد عليك، زول جاهز.",
+            "ابدأ الاستماع", { prefs.getBoolean("tested", false) }) {
+            val svc = JarvisService.instance
+            if (svc == null) toast("فعّل خدمة زول أولاً") else if (!svc.listening) svc.startListening()
+        })
+        return list
+    }
+
+    private fun showWizard() {
+        val w = wizard ?: SetupWizard(this, { wizardSteps() }) {
+            prefs.edit().putBoolean("wizard_done", true).apply()
+            wizard = null
+            refresh()
+        }.also { wizard = it }
+        w.show()
+    }
+
+    /** Open the phone's own screen for letting Zol run in the background, and say what to switch on. */
+    private fun openKeepAlive(dialog: Boolean = true) {
+        val guide = Oem.guide(Build.MANUFACTURER, Build.BRAND)
+        var opened = false
+        for ((pkg, cls) in guide.screens) {
+            try {
+                startActivity(Intent().setClassName(pkg, cls).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                opened = true
+                break
+            } catch (_: Exception) {}
+        }
+        if (!opened) try {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+        } catch (_: Exception) {}
+        if (dialog) AlertDialog.Builder(this)
+            .setTitle("خلّي زول ما يقفل • ${guide.brand}")
+            .setMessage(guide.steps.joinToString("\n\n") { "• $it" })
+            .setPositiveButton("تمام") { _, _ -> prefs.edit().putBoolean("oem_done", true).apply() }
+            .show()
+    }
+
+    /** Turning the caregiver channel on: a secret channel name, and a reply channel if there is none. */
+    private fun enableRemote() {
+        if (prefs.getString("remote_topic", "").isNullOrBlank())
+            prefs.edit().putString("remote_topic", Remote.newTopic()).putLong("remote_since", System.currentTimeMillis() / 1000).apply()
+        if (findViewById<EditText>(R.id.ntfyTopic).text.isNullOrBlank()) {
+            val alerts = prefs.getString("remote_topic", "") + "-alerts"
+            findViewById<EditText>(R.id.ntfyTopic).setText(alerts)
+            prefs.edit().putString("ntfy_topic", alerts).apply()
+        }
+    }
+
+    private fun renderCare() {
+        val topic = prefs.getString("remote_topic", "").orEmpty()
+        findViewById<TextView>(R.id.remoteInfo).text = if (prefs.getBoolean("remote_on", false) && topic.isNotEmpty())
+            "قناة الأوامر: $topic\nقناة الردود والتنبيهات: ${prefs.getString("ntfy_topic", "")}" else "مقفول"
+        val guide = Oem.guide(Build.MANUFACTURER, Build.BRAND)
+        val stops = JarvisService.instance?.stopsToday() ?: 0
+        findViewById<TextView>(R.id.keepAliveInfo).text = "تلفونك: ${guide.brand}" +
+            if (stops > 0) " • زول وقف $stops مرة اليوم" else ""
+        val got = JarvisService.instance?.quranDownloaded()
+        findViewById<TextView>(R.id.quranOffline).text = "الفاتحة، الكهف، يس، الواقعة، الملك، وجزء عمّ: حوالي 80 ميقا." +
+            (if (got != null && got > 0) " منزّل في التلفون: $got سورة." else "")
+    }
+
+    private fun shareRemote() {
+        if (!prefs.getBoolean("remote_on", false)) { toast("فعّل «المرافق يقدر يرسل أوامر» أولاً"); return }
+        saveSettings()
+        val topic = prefs.getString("remote_topic", "").orEmpty()
+        val alerts = prefs.getString("ntfy_topic", "").orEmpty()
+        val pin = prefs.getString("remote_pin", "").orEmpty()
+        val text = "طريقة متابعة زول من تلفونك:\n" +
+            "1. نزّل تطبيق ntfy (من Play أو F-Droid).\n" +
+            "2. اشترك في القناة «$alerts» عشان تجيك التنبيهات والردود.\n" +
+            "3. اشترك في القناة «$topic»، ومنها أرسل الأوامر" + (if (pin.isNotEmpty()) " (ابدأ كل رسالة بالرقم السري $pin)" else "") + ".\n\n" +
+            Remote.HELP + "\n\nما تشارك أسماء القنوات دي مع أي زول تاني."
+        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "أرسل للمرافق"))
+    }
+
+    private fun sendReport() {
+        val version = try { packageManager.getPackageInfo(packageName, 0).versionName ?: "?" } catch (_: Exception) { "?" }
+        val settings = prefs.all.filterValues { it is Boolean || it is Int || it is Long || it is Float || (it is String && it.length < 40) }
+            .mapValues { it.value.toString() }
+        val text = Report.build(Report.Input(version, "${Build.MANUFACTURER} ${Build.MODEL}", "${Build.VERSION.RELEASE} (${Build.VERSION.SDK_INT})",
+            checks().map { it.title to it.detail }, JarvisService.instance?.stopsToday() ?: 0, prefs.getString("crash_report", null),
+            JarvisService.instance?.recentEvents() ?: JarvisService.history.toList(), settings))
+        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain")
+            .putExtra(Intent.EXTRA_SUBJECT, "تقرير مشكلة زول").putExtra(Intent.EXTRA_TEXT, text), "أرسل التقرير"))
+    }
 
     private companion object {
         const val REQ_CAMERA = 77

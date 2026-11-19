@@ -86,6 +86,7 @@ class ProactiveReceiver : BroadcastReceiver() {
         private const val CODE_AGAIN = 7002
         private const val CODE_PRAYER = 7003
         private const val CODE_AZKAR = 7004
+        private const val CODE_INACTIVE = 7005
 
         /** Where prayer times are worked out: the city chosen in settings, the phone's saved location, or Khartoum. */
         fun prayerPlace(context: Context): PrayerTimes.City {
@@ -121,6 +122,14 @@ class ProactiveReceiver : BroadcastReceiver() {
                     }
                 }
             }
+        }
+
+        /** The "are you alright?" check after a long time with nobody using the phone; [at] null cancels it. */
+        fun scheduleInactive(context: Context, at: Long?) {
+            val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val pi = intent(context, "inactive", "", 1, CODE_INACTIVE)
+            am.cancel(pi)
+            if (at != null) setAlarm(context, at, pi)
         }
 
         /** Morning adhkar half an hour after sunrise, evening adhkar half an hour after Asr, when switched on. */

@@ -37,6 +37,9 @@ object Quran {
     /** The three last surahs, read together morning and evening. */
     val MUAWWIDHAT = listOf(112, 113, 114)
 
+    /** Kept on the phone for days with no internet: Al-Fatiha, Al-Kahf, Ya-Sin, Al-Waqi'a, Al-Mulk and Juz' Amma. */
+    val ESSENTIAL = listOf(1, 18, 36, 56, 67) + (78..114)
+
     data class Reciter(val id: String, val ar: String, val en: String, val pattern: String, val riwaya: String)
 
     val RECITERS = listOf(

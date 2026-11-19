@@ -14,10 +14,21 @@ android {
         applicationId = "org.jarvis.assistant"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    // Release signing comes from the environment (GitHub secrets), never from the repository.
+    val releaseKeystore = System.getenv("ZOL_KEYSTORE")
+    signingConfigs {
+        if (releaseKeystore != null) create("release") {
+            storeFile = file(releaseKeystore)
+            storePassword = System.getenv("ZOL_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("ZOL_KEY_ALIAS")
+            keyPassword = System.getenv("ZOL_KEY_PASSWORD")
+        }
     }
 
     buildTypes {
@@ -25,6 +36,7 @@ android {
             optimization {
                 enable = false
             }
+            if (releaseKeystore != null) signingConfig = signingConfigs.getByName("release")
         }
     }
     packaging {

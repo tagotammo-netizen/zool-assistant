@@ -1,0 +1,12 @@
+Zol is an open-source assistant for people with motor disabilities. It understands and speaks Sudanese Arabic.
+
+• Voice: open apps, call, send SMS and WhatsApp, read the screen and notifications, press buttons by name or number.
+• Head control: a pointer moved by your head through the front camera; click by dwelling, blinking or smiling; a large Arabic keyboard typed with the head.
+• Switch access: one or two Bluetooth switches, or the volume keys.
+• Talking board: everyday sentences spoken aloud or sent to the caregiver.
+• Safety: fall detection, an "are you alright?" check after long inactivity, caregiver alerts with location.
+• Caregiver from afar: reminders, battery and location through the ntfy app.
+• Offline prayer times, Quran recitation, adhkar and qibla direction.
+• Works on weak internet: offline listening, downloaded surahs, WhatsApp falls back to SMS.
+
+Privacy: no accounts, no ads. Screen text is sent to a cloud model only when you switch that on.

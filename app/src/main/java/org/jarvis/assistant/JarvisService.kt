@@ -30,6 +30,8 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
@@ -199,12 +201,18 @@ class JarvisService : AccessibilityService() {
             })
         } catch (_: Exception) {}
         if (prefs.getBoolean("bubble", true)) showBubble()
+        noteStart()
+        markActive(force = true)
+        applyCareSettings()
         // work in the background: start listening by itself, without opening the app
         if (prefs.getBoolean("auto_listen", false)) main.postDelayed({ if (!listening) startListening(false) }, 1500)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event == null || head?.running != true) return
+        if (event == null) return
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && switches?.running == true)
+            main.postDelayed({ switches?.refresh() }, 500)
+        if (head?.running != true) return
         when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_FOCUSED, AccessibilityEvent.TYPE_VIEW_CLICKED -> {
                 val source = event.source ?: return
@@ -219,12 +227,27 @@ class JarvisService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
+    /** A Bluetooth switch, a keyboard, or the volume keys when they are switches. */
+    override fun onKeyEvent(event: KeyEvent): Boolean {
+        val control = switches ?: return false
+        if (!control.running) return false
+        val key = SwitchScan.keyOf(event.keyCode, prefs.getString("switch_mode", "off") == "one", prefs.getBoolean("switch_volume", false))
+        if (key == SwitchScan.Key.NONE) return false
+        if (event.action == KeyEvent.ACTION_UP && event.repeatCount == 0) main.post {
+            markActive()
+            if (key == SwitchScan.Key.NEXT) control.step() else control.select()
+        }
+        return true
+    }
+
     override fun onUnbind(intent: Intent?): Boolean {
+        noteStop()
         shutdown()
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
+        noteStop()
         shutdown()
         recognizer?.destroy()
         recognizer = null
@@ -246,6 +269,11 @@ class JarvisService : AccessibilityService() {
         head = null
         quran?.stop()
         stopQibla()
+        stopFall()
+        switches?.stop()
+        switches = null
+        board?.hide()
+        board = null
         hideBubble()
         try { recognizer?.cancel() } catch (_: Exception) {}
         instance = null
@@ -360,6 +388,13 @@ class JarvisService : AccessibilityService() {
             try {
                 val now = SystemClock.elapsedRealtime()
                 ecoCheck()
+                if (netWhisper && online()) {
+                    netWhisper = false
+                    warnedNoNet = false
+                    whisper.cancel()
+                    log("رجع النت، رجعت للاستماع العادي.")
+                    if (listening) resume(500)
+                } else if (!netWhisper && warnedNoNet && online()) warnedNoNet = false
                 if (!listening && !ecoPaused && prefs.getBoolean("auto_listen", false) && !blocked && granted(Manifest.permission.RECORD_AUDIO)) {
                     log("أعدت تشغيل الاستماع.")
                     startListening(false)
@@ -395,7 +430,34 @@ class JarvisService : AccessibilityService() {
     private var whisperFailed = false
 
     /** The experimental offline Whisper engine is used only when chosen in settings and while it works. */
-    private fun useWhisper() = prefs.getString("engine", "google") == "whisper" && !whisperFailed
+    private fun useWhisper() = (prefs.getString("engine", "google") == "whisper" || netWhisper) && !whisperFailed
+
+    /** The internet dropped: listen with the offline engine (when its files are on the phone) until it comes back. */
+    private var netWhisper = false
+    private var warnedNoNet = false
+
+    private fun online(): Boolean {
+        val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
+    /** True when the trouble was handled (switched to offline listening). */
+    private fun netTrouble(): Boolean {
+        if (online() || offlineWanted()) return false
+        if (!netWhisper && prefs.getString("engine", "google") != "whisper" && whisper.missing().isEmpty() && !whisperFailed) {
+            netWhisper = true
+            log("النت قاطع، بقيت أسمع بدون نت.")
+            rebuildRecognizer()
+            resume(500)
+            return true
+        }
+        if (!warnedNoNet) {
+            warnedNoNet = true
+            log("النت قاطع والاستماع محتاج نت. نزّل حزمة العربي بدون نت من الإعدادات ← الاستماع.")
+        }
+        return false
+    }
 
     fun whisperStatus(): String {
         val absent = whisper.missing()
@@ -851,6 +913,10 @@ class JarvisService : AccessibilityService() {
             main.post {
                 ecoCheck()
                 if (intent?.action == Intent.ACTION_USER_PRESENT) morningBriefing()
+                if (intent?.action == Intent.ACTION_USER_PRESENT || intent?.action == Intent.ACTION_SCREEN_ON) {
+                    if (intent.action == Intent.ACTION_USER_PRESENT && wellbeing != null) wellbeingAnswered(true)
+                    markActive()
+                }
             }
         }
     }
@@ -1278,6 +1344,8 @@ class JarvisService : AccessibilityService() {
 
         override fun onError(error: Int) {
             noteError(error)
+            if (error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT ||
+                error == SpeechRecognizer.ERROR_SERVER) { if (netTrouble()) return }
             when (error) {
                 SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> resume(300)   // silence: normal
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
@@ -1320,6 +1388,14 @@ class JarvisService : AccessibilityService() {
     private fun processResults(list: List<String>) {
         run {
             val heard = list.firstOrNull().orEmpty()
+            if (wellbeing != null && heard.isNotBlank()) {               // the answer to "are you alright?"
+                log("سمعت: $heard")
+                markActive()
+                val bad = list.any { Commands.isEmergency(it) } || list.any { Commands.yesNo(it) == false } ||
+                    list.any { Commands.normalize(it).let { n -> "ساعد" in n || "الحق" in n || "وجع" in n || "تعبان" in n } }
+                wellbeingAnswered(!bad)
+                return
+            }
             if (trainQueue != null && heard.isNotBlank() && list.none { Commands.isEmergency(it) }) {
                 log("سمعت: $heard")
                 trainHeard(list.map { Commands.stripWake(it) ?: it }.filter { it.isNotBlank() }.ifEmpty { list })
@@ -1355,6 +1431,7 @@ class JarvisService : AccessibilityService() {
 
     /** Run what was said (after the wake word) or typed in the app. */
     fun handleText(text: String) {
+        if (text.isNotBlank()) markActive()
         Commands.userDict = Commands.parseDict(prefs.getString("dialect", "").orEmpty())
         Commands.userPhrases = Commands.parsePhrases(prefs.getString("phrases", "").orEmpty())
         Commands.homeDevices = devices().keys
@@ -1529,6 +1606,7 @@ class JarvisService : AccessibilityService() {
             if (kind != "again") ProactiveReceiver.schedule(this)          // the plan moves on to the next one
             if (kind == "prayer") { prayerAlert(text, attempt); return@post }
             if (kind == "azkar") { azkarAlert(text); return@post }
+            if (kind == "inactive") { inactiveFire(); return@post }
             if (!prefs.getBoolean("pro_on", false)) return@post
             when (kind) {
                 "bedtime" -> {
@@ -1660,6 +1738,301 @@ class JarvisService : AccessibilityService() {
         announce(text, false, urgent = true)
     }
 
+    // ------------------------------------------------------------------ keeping alive
+
+    private fun bootTime() = System.currentTimeMillis() - SystemClock.elapsedRealtime()
+
+    private fun noteStart() {
+        val s = ServiceHealth.started(ServiceHealth.decode(prefs.getString("svc_health", null)), System.currentTimeMillis(), bootTime())
+        prefs.edit().putString("svc_health", ServiceHealth.encode(s)).commit()
+        val today = ServiceHealth.stopsToday(s, System.currentTimeMillis())
+        if (today > 0 && s.stops.lastOrNull()?.let { System.currentTimeMillis() - it < 60_000 } == true)
+            log("التلفون قفل زول ($today مرة اليوم). افتح الإعدادات ← المساعدة ← «خلّي زول ما يقفل».")
+    }
+
+    private fun noteStop() {
+        val s = ServiceHealth.stopped(ServiceHealth.decode(prefs.getString("svc_health", null)))
+        prefs.edit().putString("svc_health", ServiceHealth.encode(s)).commit()
+    }
+
+    fun stopsToday() = ServiceHealth.stopsToday(ServiceHealth.decode(prefs.getString("svc_health", null)), System.currentTimeMillis())
+
+    fun recentEvents(): List<String> = history.toList()
+
+    /** Settings for safety, the caregiver and switches changed (or Zol just started). */
+    fun applyCareSettings() {
+        if (prefs.getBoolean("fall_on", false)) startFall() else stopFall()
+        scheduleInactive()
+        main.removeCallbacks(remoteTask)
+        if (prefs.getBoolean("remote_on", false) && remoteTopic().isNotEmpty()) main.postDelayed(remoteTask, 5_000)
+        val mode = prefs.getString("switch_mode", "off")
+        if (mode == "off") { switches?.stop(); switches = null } else {
+            val control = switches ?: SwitchControl(this, { switchItems() }, { switchStrip(it) }).also { switches = it }
+            control.start(if (mode == "one") prefs.getLong("switch_scan", 1500L) else 0L)
+        }
+    }
+
+    // ------------------------------------------------------------------ talking board
+
+    private var board: AacBoard? = null
+
+    fun showBoard(): String {
+        if (board?.shown == true) return t("لوحة الكلام فاتحة.", "The board is open.")
+        val b = AacBoard(this, Aac.pages(prefs.getString("aac_custom", "").orEmpty()), { card, send -> boardCard(card, send) }, { hideBoard() })
+        board = b
+        b.show()
+        head?.raise()
+        if (switches?.running == true) main.postDelayed({ switches?.refresh() }, 300)
+        return t("دي لوحة الكلام. اختار الكلام الداير تقولو.", "Here is the talking board.")
+    }
+
+    fun hideBoard() {
+        board?.hide()
+        board = null
+        if (switches?.running == true) main.postDelayed({ switches?.refresh() }, 300)
+    }
+
+    /** Said aloud as written (the person's own words), or sent to the caregiver. */
+    private fun boardCard(card: Aac.Card, send: Boolean) {
+        markActive()
+        if (send) {
+            val sent = caregiverMessage(Aac.forCaregiver(card), card.urgent)
+            say(if (sent) t("رسلتها للمرافق.", "Sent to your caregiver.") else t("ما في رقم أو قناة للمرافق في الإعدادات.", "No caregiver is set."))
+            return
+        }
+        if (card.urgent) beep(3)
+        try { tts?.stop() } catch (_: Exception) {}
+        say(card.text)
+        if (card.urgent) say(card.text, add = true)
+    }
+
+    /** A message to the caregiver: a notification through ntfy and an SMS when a number is saved. */
+    private fun caregiverMessage(text: String, urgent: Boolean): Boolean {
+        val topic = prefs.getString("ntfy_topic", "").orEmpty().trim()
+        if (topic.isNotEmpty()) ntfyPost(topic, text, if (urgent) "urgent" else "default")
+        val sms = smsCaregiver(text)
+        return topic.isNotEmpty() || sms
+    }
+
+    private fun ntfyPost(topic: String, text: String, priority: String = "default") = Thread {
+        try {
+            val con = URL("https://ntfy.sh/$topic").openConnection() as HttpURLConnection
+            con.requestMethod = "POST"
+            con.doOutput = true
+            con.connectTimeout = 10000
+            con.readTimeout = 10000
+            con.setRequestProperty("Priority", priority)
+            con.outputStream.use { it.write(text.toByteArray()) }
+            con.responseCode
+            con.disconnect()
+        } catch (e: Exception) {
+            log("ما قدرت أرسل للمرافق: ${e.message}")
+        }
+    }.start()
+
+    // ------------------------------------------------------------------ safety: falls and long quiet
+
+    private var fallListener: SensorEventListener? = null
+    private val fallDetector = FallDetector()
+    private var wellbeing: String? = null              // "fall" or "inactive" while waiting for an answer
+    private var wellbeingTries = 0
+    private var lastActiveSaved = 0L
+
+    private fun startFall() {
+        if (fallListener != null) return
+        val sensors = getSystemService(SENSOR_SERVICE) as SensorManager
+        val sensor = sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) ?: return
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(e: SensorEvent) {
+                if (fallDetector.update(e.values[0], e.values[1], e.values[2], SystemClock.elapsedRealtime()))
+                    main.post { if (wellbeing == null) askWellbeing("fall") }
+            }
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        }
+        fallListener = listener
+        sensors.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
+    }
+
+    private fun stopFall() {
+        fallListener?.let { (getSystemService(SENSOR_SERVICE) as SensorManager).unregisterListener(it) }
+        fallListener = null
+        main.removeCallbacks(wellbeingTimeout)
+    }
+
+    /** The person did something: the quiet-time check moves on. Saved at most every ten minutes. */
+    private fun markActive(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastActiveSaved < 10 * 60_000L) return
+        lastActiveSaved = now
+        prefs.edit().putLong("last_active", now).apply()
+        scheduleInactive()
+    }
+
+    private fun scheduleInactive() {
+        val hours = prefs.getInt("inactive_hours", 0)
+        ProactiveReceiver.scheduleInactive(this,
+            Inactivity.nextCheck(prefs.getLong("last_active", System.currentTimeMillis()), hours, System.currentTimeMillis()))
+    }
+
+    private fun inactiveFire() {
+        val hours = prefs.getInt("inactive_hours", 0)
+        if (!Inactivity.idle(prefs.getLong("last_active", 0L), hours, System.currentTimeMillis())) { scheduleInactive(); return }
+        if (wellbeing == null) askWellbeing("inactive")
+    }
+
+    private val wellbeingTimeout = Runnable {
+        val kind = wellbeing ?: return@Runnable
+        if (wellbeingTries < 2) { askWellbeing(kind); return@Runnable }
+        wellbeing = null
+        wellbeingTries = 0
+        if (kind == "fall") respond(emergency("زول: يمكن يكون وقع، وما رد علي"))
+        else {
+            val hours = prefs.getInt("inactive_hours", 0)
+            caregiverMessage("زول: ما في أي حركة في التلفون من $hours ساعات، وما رد علي. اتطمّن عليهو.", true)
+            log("أرسلت للمرافق يتطمّن عليك.")
+            markActive(force = true)
+        }
+    }
+
+    private fun askWellbeing(kind: String) {
+        wellbeing = kind
+        wellbeingTries++
+        beep(3)
+        val question = if (kind == "fall") t("في حاجة وقعت؟ إنت كويس؟ قول أنا كويس، أو قول ساعدني.", "Did you fall? Are you alright?")
+        else t("ما سمعت منك من زمن. إنت كويس؟ قول أنا كويس.", "I have not heard from you for a while. Are you alright?")
+        announce(question, true, urgent = true)
+        if (!listening && granted(Manifest.permission.RECORD_AUDIO)) startListening(false)
+        awakeUntil = SystemClock.elapsedRealtime() + 90_000            // the answer is said without the wake word
+        main.removeCallbacks(wellbeingTimeout)
+        main.postDelayed(wellbeingTimeout, if (kind == "fall") 45_000L else 90_000L)
+    }
+
+    private fun wellbeingAnswered(fine: Boolean) {
+        val kind = wellbeing ?: return
+        wellbeing = null
+        wellbeingTries = 0
+        main.removeCallbacks(wellbeingTimeout)
+        awakeUntil = 0L
+        if (fine) respond(t("الحمد لله على السلامة.", "Glad you are fine."))
+        else respond(emergency(if (kind == "fall") "زول: وقع ومحتاج مساعدة" else "زول: محتاج مساعدة"))
+        markActive(force = true)
+    }
+
+    // ------------------------------------------------------------------ the caregiver, from afar
+
+    private fun remoteTopic() = prefs.getString("remote_topic", "").orEmpty().trim()
+
+    private val remoteTask = object : Runnable {
+        override fun run() {
+            val topic = remoteTopic()
+            if (!prefs.getBoolean("remote_on", false) || topic.isEmpty()) return
+            if (online()) Thread { pollRemote(topic) }.start()
+            main.postDelayed(this, 60_000)
+        }
+    }
+
+    private fun pollRemote(topic: String) {
+        val last = prefs.getString("remote_last", "").orEmpty()
+        val since = if (last.isNotEmpty()) last else prefs.getLong("remote_since", System.currentTimeMillis() / 1000).toString()
+        val body = httpGet("https://ntfy.sh/$topic/json?poll=1&since=${Uri.encode(since)}") ?: return
+        val messages = body.lines().mapNotNull { Remote.ntfyMessage(it) }
+        if (messages.isEmpty()) return
+        prefs.edit().putString("remote_last", messages.last().first).apply()
+        val pin = prefs.getString("remote_pin", "").orEmpty()
+        main.post { for ((_, text) in messages) Remote.parse(text, pin)?.let { remoteDo(it) } }
+    }
+
+    private fun remoteReply(text: String) {
+        val out = prefs.getString("ntfy_topic", "").orEmpty().trim().ifEmpty { remoteTopic() + "-reply" }
+        ntfyPost(out, text)
+    }
+
+    private fun remoteDo(action: Remote.Action) {
+        when (action) {
+            is Remote.Action.Say -> { announce(t("رسالة من المرافق: ", "From your caregiver: ") + action.text, true); remoteReply("✓ وصلت، وقلتها.") }
+            is Remote.Action.Run -> {
+                val result = execute(action.cmd)
+                announce(t("المرافق ضبط ليك: ", "Your caregiver set: ") + result, true)
+                remoteReply("✓ $result")
+            }
+            Remote.Action.Battery -> remoteReply(batteryState().let { (pct, plugged) -> "البطارية $pct%" + if (plugged) " وهو في الشاحن" else "" })
+            Remote.Action.Where -> remoteReply(lastLocationLink()?.let { "آخر موقع: $it" } ?: "الموقع ما متاح (إذن الموقع مقفول أو ما في موقع حديث).")
+            Remote.Action.Status -> {
+                val mins = (System.currentTimeMillis() - prefs.getLong("last_active", 0L)) / 60_000
+                val (pct, _) = batteryState()
+                remoteReply("زول شغّال • الاستماع ${if (listening) "شغّال" else "مقفول"} • البطارية $pct% • آخر استعمال قبل $mins دقيقة")
+            }
+            Remote.Action.Help -> remoteReply(Remote.HELP)
+            is Remote.Action.Refused -> remoteReply("✗ ${action.why}")
+        }
+    }
+
+    // ------------------------------------------------------------------ switches
+
+    private var switches: SwitchControl? = null
+
+    /** What the switch frame visits: the board when it is open, otherwise everything that can be pressed on screen. */
+    private fun switchItems(): List<Pair<SwitchScan.Item, () -> Unit>> {
+        board?.takeIf { it.shown }?.let { b ->
+            return b.targets().map { (r, v) ->
+                SwitchScan.Item(r.left, r.top, r.right, r.bottom, v.contentDescription?.toString().orEmpty()) to { v.performClick(); Unit }
+            }
+        }
+        val nodes = ArrayList<Pair<SwitchScan.Item, AccessibilityNodeInfo>>()
+        val root = rootInActiveWindow ?: return emptyList()
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var seen = 0
+        while (queue.isNotEmpty() && seen < 800 && nodes.size < 80) {
+            val n = queue.removeFirst()
+            seen++
+            if ((n.isClickable || n.isEditable || n.isLongClickable) && n.isVisibleToUser && n.isEnabled) {
+                val r = Rect()
+                n.getBoundsInScreen(r)
+                if (!r.isEmpty) nodes.add(SwitchScan.Item(r.left, r.top, r.right, r.bottom, (n.contentDescription ?: n.text ?: "").toString()) to n)
+            }
+            for (i in 0 until n.childCount) n.getChild(i)?.let { queue.add(it) }
+        }
+        val byItem = nodes.toMap()
+        val d = resources.displayMetrics.density
+        return SwitchScan.order(nodes.map { it.first }, (24 * d).toInt(), (16 * d).toInt()).map { item ->
+            item to {
+                val node = byItem[item]
+                if (node == null || !node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tapAt(item.cx.toFloat(), item.cy.toFloat())
+            }
+        }
+    }
+
+    private fun switchStrip(s: SwitchScan.Strip) {
+        markActive()
+        when (s) {
+            SwitchScan.Strip.BACK -> if (board?.shown == true) hideBoard() else performGlobalAction(GLOBAL_ACTION_BACK)
+            SwitchScan.Strip.HOME -> performGlobalAction(GLOBAL_ACTION_HOME)
+            SwitchScan.Strip.DOWN -> swipe(true)
+            SwitchScan.Strip.UP -> swipe(false)
+            SwitchScan.Strip.NOTIFS -> performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
+            SwitchScan.Strip.LISTEN -> { awakeUntil = SystemClock.elapsedRealtime() + 15_000; beep(1); if (!listening) startListening(false) else resume(100) }
+            SwitchScan.Strip.BOARD -> if (board?.shown == true) hideBoard() else respond(showBoard())
+        }
+    }
+
+    // ------------------------------------------------------------------ Quran downloads
+
+    private fun downloadQuran(surahs: List<Int>, reciterId: String?): String {
+        if (!online()) return t("النت قاطع هسي. جرّب لما يرجع.", "No internet right now.")
+        val reciter = Quran.reciter(reciterId ?: prefs.getString("quran_reciter", Quran.DEFAULT_RECITER))
+        QuranPlayer.download(this, surahs, reciter.id) { saved, failed ->
+            announce(if (failed == 0) t("نزّلت ${if (surahs.size == 1) Quran.title(surahs[0]) else "$saved سورة"}، بتشتغل من غير نت.", "Downloaded.")
+            else t("نزّلت $saved، وما قدرت أنزّل $failed. جرّب تاني بعدين.", "Some downloads failed."), false)
+        }
+        return t("بنزّل ${if (surahs.size == 1) Quran.title(surahs[0]) else "${surahs.size} سورة"} بصوت الشيخ ${reciter.ar}. بقول ليك لما أخلص.",
+            "Downloading.")
+    }
+
+    fun downloadEssentialQuran() { main.post { respond(downloadQuran(Quran.ESSENTIAL, null)) } }
+
+    fun quranDownloaded() = QuranPlayer.downloaded(this, prefs.getString("quran_reciter", Quran.DEFAULT_RECITER) ?: Quran.DEFAULT_RECITER)
+
     // ------------------------------------------------------------------ Quran
 
     private var quran: QuranPlayer? = null
@@ -1671,7 +2044,10 @@ class JarvisService : AccessibilityService() {
                 if (event.fellBack) announce(t("الشيخ ما عندو تسجيل لـ${Quran.title(event.surah)}، فشغّلتها بصوت الشيخ مشاري العفاسي.",
                     "That reciter has no recording of this surah, so it is Mishary Alafasy."), false)
             }
-            is QuranPlayer.Event.Failed -> announce(t("ما قدرت أشغّل ${Quran.title(event.surah)}. اتأكد إنو الإنترنت شغّال.",
+            is QuranPlayer.Event.Failed -> announce(if (!online())
+                t("النت قاطع، و${Quran.title(event.surah)} ما منزّلة في التلفون. لما النت يرجع قول: نزّل ${Quran.title(event.surah)}.",
+                    "No internet, and this surah is not downloaded.")
+            else t("ما قدرت أشغّل ${Quran.title(event.surah)}. اتأكد إنو الإنترنت شغّال.",
                 "I could not play the surah. Check the internet."), false)
             QuranPlayer.Event.Finished -> {}
         }
@@ -2047,6 +2423,7 @@ class JarvisService : AccessibilityService() {
         Thread {
             val raw = cloudChat(system, text)
             main.post {
+                if (raw == null && !online()) { respond(t("النت قاطع هسي، والسؤال ده محتاج نت.", "There is no internet right now.")); return@post }
                 if (raw == null) { fallback(text); return@post }
                 val answer = Agent.parseReply(raw)
                 val commands = try {
@@ -2278,6 +2655,8 @@ class JarvisService : AccessibilityService() {
             is Cmd.QuranCtl -> quranControl(c.what)
             is Cmd.Azkar -> readAzkar(c.kind)
             Cmd.Qibla -> qibla()
+            is Cmd.QuranDownload -> downloadQuran(c.surahs, c.reciter)
+            is Cmd.Board -> if (c.show) showBoard() else { hideBoard(); ok }
             is Cmd.HeadKeyboard -> if (c.show) openHeadKeyboard() else { hideHeadKeyboard(); t("قفلت الكيبورد.", "Keyboard closed.") }
             Cmd.Emergency -> emergency()
             Cmd.Train -> startDialectTraining()
@@ -2814,6 +3193,14 @@ class JarvisService : AccessibilityService() {
         lastContact = contact.first
         if (body.isBlank()) return t("قل الرسالة كاملة، مثلاً: ارسل لأحمد واتساب تقول أنا في الطريق.",
             "Say the whole message, for example: whatsapp Ali saying I am on my way.")
+        if (!online() && granted(Manifest.permission.SEND_SMS))
+            return ask(t("النت قاطع. أرسل لـ${contact.first} رسالة عادية (SMS): «$body»؟ نعم أو لا.",
+                "No internet. Send it to ${contact.first} as a text message instead?")) {
+                @Suppress("DEPRECATION")
+                val sms = if (Build.VERSION.SDK_INT >= 31) getSystemService(SmsManager::class.java) else SmsManager.getDefault()
+                sms.sendMultipartTextMessage(contact.second, null, sms.divideMessage(body), null, null)
+                t("أرسلتها رسالة عادية.", "Sent as a text message.")
+            }
         return ask(t("أرسل واتساب إلى ${contact.first}: «$body». نعم أو لا؟", "WhatsApp to ${contact.first}: $body. Yes or no?")) {
             val uri = Uri.parse("https://wa.me/${waNumber(contact.second)}?text=${Uri.encode(body)}")
             startActivity(Intent(Intent.ACTION_VIEW, uri).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -2989,7 +3376,7 @@ class JarvisService : AccessibilityService() {
     }
 
     /** Alert the caregiver: push notification through ntfy, then a phone call if a number is saved. */
-    private fun emergency(): String {
+    private fun emergency(message: String = "زول: طلب مساعدة عاجل"): String {
         val topic = prefs.getString("ntfy_topic", "").orEmpty().trim()
         val number = prefs.getString("emergency_number", "").orEmpty().trim()
         if (topic.isNotEmpty()) Thread {
@@ -3001,14 +3388,14 @@ class JarvisService : AccessibilityService() {
                 con.readTimeout = 10000
                 con.setRequestProperty("Priority", "urgent")
                 con.setRequestProperty("Tags", "rotating_light")
-                con.outputStream.use { it.write("زول: طلب مساعدة عاجل".toByteArray()) }
+                con.outputStream.use { it.write(message.toByteArray()) }
                 log(if (con.responseCode in 200..299) "تم إرسال تنبيه الطوارئ." else "فشل إرسال التنبيه (${con.responseCode}).")
                 con.disconnect()
             } catch (e: Exception) {
                 log("فشل إرسال التنبيه: ${e.message}")
             }
         }.start()
-        smsCaregiver("زول: طلب مساعدة عاجل!")
+        smsCaregiver("$message!")
         val called = number.isNotEmpty() && dial(number) == t("جاري الاتصال.", "Calling.")
         return when {
             called -> t("أتصل بالمرافق الآن.", "Calling your caregiver now.")

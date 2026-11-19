@@ -267,6 +267,13 @@ class HeadControl(
         try { wm.addView(view, lp); cursor = view } catch (e: Exception) { onStatus("تعذّر إظهار المؤشر: ${e.message}") }
     }
 
+    /** Put the ring back on top, after another overlay (the talking board) was opened over it. */
+    fun raise() {
+        val view = cursor ?: return
+        val lp = view.layoutParams as? WindowManager.LayoutParams ?: return
+        try { wm.removeView(view); wm.addView(view, lp) } catch (_: Exception) {}
+    }
+
     /**
      * The ring and the dock, drawn on one transparent layer that lets every touch through.
      * Ring: blue while following the head, a growing arc while waiting to tap, grey when no face is seen,

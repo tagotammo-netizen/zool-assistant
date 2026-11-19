@@ -8,6 +8,10 @@ import android.media.MediaPlayer
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.Locale
 
 /**
  * Plays a surah streamed from the internet, one after another. It pauses for a phone call or another app,
@@ -65,7 +69,8 @@ class QuranPlayer(private val context: Context, private val onEvent: (Event) -> 
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                 .build())
             mp.setWakeMode(context, PowerManager.PARTIAL_WAKE_LOCK)
-            mp.setDataSource(Quran.url(surah, reciterId))
+            val local = file(context, surah, reciterId)
+            if (local.length() > 0) mp.setDataSource(local.path) else mp.setDataSource(Quran.url(surah, reciterId))
             mp.setOnPreparedListener {
                 if (player !== it) return@setOnPreparedListener
                 if (ducked) it.setVolume(DUCK, DUCK)
@@ -152,5 +157,46 @@ class QuranPlayer(private val context: Context, private val onEvent: (Event) -> 
         }
     }
 
-    companion object { const val DUCK = 0.2f }
+    companion object {
+        const val DUCK = 0.2f
+
+        /** Where a downloaded surah is kept on the phone. */
+        fun file(context: Context, surah: Int, reciterId: String): File {
+            val base = context.getExternalFilesDir(null) ?: context.filesDir
+            return File(base, "quran/$reciterId/" + String.format(Locale.US, "%03d.mp3", surah))
+        }
+
+        fun downloaded(context: Context, reciterId: String) = (1..114).count { file(context, it, reciterId).length() > 0 }
+
+        /**
+         * Download [surahs] one after another, in the background. A half-done file is never used: it is written
+         * under another name and renamed when complete. [finished] runs on the main thread.
+         */
+        fun download(context: Context, surahs: List<Int>, reciterId: String, finished: (saved: Int, failed: Int) -> Unit) {
+            val main = Handler(Looper.getMainLooper())
+            Thread {
+                var saved = 0
+                var failed = 0
+                for (n in surahs) {
+                    val target = file(context, n, reciterId)
+                    if (target.length() > 0) { saved++; continue }
+                    target.parentFile?.mkdirs()
+                    val part = File(target.path + ".part")
+                    try {
+                        val con = URL(Quran.url(n, reciterId)).openConnection() as HttpURLConnection
+                        con.connectTimeout = 15_000
+                        con.readTimeout = 30_000
+                        if (con.responseCode !in 200..299) { failed++; con.disconnect(); continue }
+                        con.inputStream.use { input -> part.outputStream().use { input.copyTo(it, 64 * 1024) } }
+                        con.disconnect()
+                        if (part.length() > 10_000 && part.renameTo(target)) saved++ else { part.delete(); failed++ }
+                    } catch (e: Exception) {
+                        part.delete()
+                        failed++
+                    }
+                }
+                main.post { finished(saved, failed) }
+            }.start()
+        }
+    }
 }

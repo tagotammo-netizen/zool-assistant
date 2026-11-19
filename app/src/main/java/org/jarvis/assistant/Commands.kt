@@ -66,7 +66,9 @@ sealed class Cmd {
     data class QuranCtl(val what: String) : Cmd()                // stop, resume, next, prev
     data class Azkar(val kind: String?) : Cmd()                  // morning, evening, sleep; null: by the time of day
     object Qibla : Cmd()
-    data class HeadKeyboard(val show: Boolean) : Cmd()           // the keyboard typed with the head pointer
+    data class HeadKeyboard(val show: Boolean) : Cmd()
+    data class QuranDownload(val surahs: List<Int>, val reciter: String?) : Cmd()   // keep on the phone for no internet
+    data class Board(val show: Boolean) : Cmd()                  // the talking board           // the keyboard typed with the head pointer
     object Train : Cmd()                                     // "دربني": voice training of the person's own dialect
     data class Teach(val phrase: String, val meaning: String) : Cmd()   // "لما اقول X يعني Y"
     object Hush : Cmd()                                      // "اسكت": stop talking / reading
@@ -723,6 +725,12 @@ object Commands {
                 has(t, "النوم", "نوم", "sleep") -> "sleep"
                 else -> null
             })
+        if (has(t, "لوحه الكلام", "لوحه التواصل", "لوحه الحكي", "talking board"))
+            return Cmd.Board(!has(t, "اقفل", "قفل", "اخفي", "شيل", "سكر", "close"))
+        if (has(t, "نزل", "حمل", "download")) {
+            val wanted = if (has(t, "جزء عم", "جزء عمه", "السور القصيره", "السور المهمه")) Quran.ESSENTIAL else Quran.surahsIn(t)
+            if (wanted.isNotEmpty()) return Cmd.QuranDownload(wanted, Quran.reciterOf(t))
+        }
         val quranWord = has(t, "القران", "قران", "التلاوه", "تلاوه", "السوره", "quran")
         if (quranWord && has(t, "وقف", "اوقف", "اقفل", "قفل", "اسكت", "طفي", "بطل", "stop")) return Cmd.QuranCtl("stop")
         if (has(t, "السوره الجايه", "السوره البعدها", "السوره التاليه", "السوره البعدها", "next surah")) return Cmd.QuranCtl("next")

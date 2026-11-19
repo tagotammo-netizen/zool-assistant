@@ -1453,9 +1453,292 @@
                             android:text="أذكار المسا" />
                     </LinearLayout>
 
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnQuranDownload"
+                        style="@style/JTonal"
+                        android:text="نزّل السور المهمة للاستماع بدون نت" />
+
+                    <TextView
+                        android:id="@+id/quranOffline"
+                        style="@style/JNote"
+                        android:text="الفاتحة، الكهف، يس، الواقعة، الملك، وجزء عمّ: حوالي 80 ميقا." />
                     <TextView
                         style="@style/JNote"
                         android:text="التلاوة من الإنترنت (mp3quran). الشيخ نورين محمد صديق برواية الدوري؛ لو السورة ما عندو، بتشتغل بصوت العفاسي. بالصوت: «شغّل سورة الكهف» • «سورة يس بصوت عبد الباسط» • «شغّل المعوذات» • «السورة الجاية» • «وقّف القرآن» • «أذكار الصباح» • «وين القبلة؟». التذكير بالأذكار بعد الشروق بنص ساعة وبعد العصر بنص ساعة." />
+                </LinearLayout>
+
+                <View style="@style/JDivider" />
+
+                <!-- care, access and help -->
+                <TextView
+                    android:id="@+id/secAccess"
+                    style="@style/JSection"
+                    android:drawableStart="@drawable/ic_chat"
+                    android:text="لوحة الكلام والأزرار" />
+
+                <LinearLayout style="@style/JSectionBody">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnBoard"
+                        style="@style/JTonal"
+                        android:layout_marginTop="0dp"
+                        android:text="افتح لوحة الكلام" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:hint="عباراتك أنت (كل عبارة في سطر، ممكن تبدأ بإيموجي)">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/aacCustom"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="textMultiLine"
+                            android:minLines="3" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="التحكم بالأزرار (زر بلوتوث، كيبورد، أو أزرار الصوت)" />
+
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/switchModeGroup"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        app:selectionRequired="true"
+                        app:singleSelection="true">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/swOff"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="مقفول" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/swTwo"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="زرّين" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/swOne"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="زر واحد" />
+
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchVolumeKeys"
+                        style="@style/JSwitch"
+                        android:text="أزرار الصوت تشتغل كأزرار تحكم" />
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="سرعة التنقّل مع الزر الواحد" />
+
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/scanSpeedGroup"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        app:selectionRequired="true"
+                        app:singleSelection="true">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/scanFast"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="1 ث" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/scanMid"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="1.5 ث" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/scanSlow"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="2.5 ث" />
+
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+                    <TextView
+                        style="@style/JNote"
+                        android:text="لوحة الكلام: «زول لوحة الكلام». فيها عبارات زي «أنا عطشان» و«عندي وجع»، تتقال بصوت عالي أو تترسل للمرافق. الأزرار: زرّين = واحد بيمشّي الإطار والتاني بيضغط (مسافة/Enter)؛ زر واحد = الإطار بيمشي براهو والزر بيضغط. تحت الشاشة في شريط: رجوع، الرئيسية، انزل، اطلع، الإشعارات، اسمعني، لوحة الكلام. بعد التفعيل ممكن تحتاج تقفل خدمة زول وتفتحها تاني." />
+
+                </LinearLayout>
+
+                <View style="@style/JDivider" />
+
+                <TextView
+                    android:id="@+id/secSafety"
+                    style="@style/JSection"
+                    android:drawableStart="@drawable/ic_warning"
+                    android:text="الأمان والمرافق" />
+
+                <LinearLayout style="@style/JSectionBody">
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchFall"
+                        style="@style/JSwitch"
+                        android:layout_marginTop="0dp"
+                        android:text="كشف السقوط (يسألك ولو ما رديت يبلّغ المرافق)" />
+
+                    <TextView
+                        style="@style/JLabel"
+                        android:text="اسأل عني لو ما استعملت التلفون" />
+
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/inactiveGroup"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        app:selectionRequired="true"
+                        app:singleSelection="true">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/inactOff"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="لا" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/inact4"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="4 ساعات" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/inact8"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="8 ساعات" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/inact12"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:paddingStart="2dp"
+                            android:paddingEnd="2dp"
+                            android:text="12 ساعة" />
+
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+                    <TextView
+                        style="@style/JNote"
+                        android:text="ما بيسأل بالليل (من 11 لحدي 7:30 الصباح). لو ما رديت مرتين، بيرسل للمرافق." />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchRemote"
+                        style="@style/JSwitch"
+                        android:text="المرافق يقدر يرسل أوامر من بعيد (تطبيق ntfy)" />
+
+                    <TextView
+                        android:id="@+id/remoteInfo"
+                        style="@style/JNote"
+                        android:text="—" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/JField"
+                        android:hint="رقم سري للأوامر (اختياري)">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/remotePin"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:importantForAutofill="no"
+                            android:inputType="text" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnShareRemote"
+                        style="@style/JTonal"
+                        android:text="أرسل الطريقة للمرافق" />
+
+                    <TextView
+                        style="@style/JNote"
+                        android:text="المرافق بيكتب في ntfy مثلاً: «ذكره بالدوا الساعة 9 بالليل»، «قول: أنا جاي»، «البطارية»، «وين»، «حالة». الاتصال وفتح التطبيقات ما مسموحين من بعيد." />
+
+                </LinearLayout>
+
+                <View style="@style/JDivider" />
+
+                <TextView
+                    android:id="@+id/secSupport"
+                    style="@style/JSection"
+                    android:drawableStart="@drawable/ic_spark"
+                    android:text="المساعدة" />
+
+                <LinearLayout style="@style/JSectionBody">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnWizard"
+                        style="@style/JTonal"
+                        android:layout_marginTop="0dp"
+                        android:text="معالج الإعداد خطوة بخطوة" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnKeepAlive"
+                        style="@style/JTonal"
+                        android:text="خلّي زول ما يقفل (حسب تلفونك)" />
+
+                    <TextView
+                        android:id="@+id/keepAliveInfo"
+                        style="@style/JNote"
+                        android:text="—" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnReport"
+                        style="@style/JTonal"
+                        android:text="أرسل تقرير مشكلة" />
+
+                    <TextView
+                        style="@style/JNote"
+                        android:text="التقرير فيه نوع التلفون، حالة زول، آخر خطأ، وآخر الأوامر. الأرقام والروابط والمفاتيح ما بتكون فيهو. بتشوفو قبل ما ترسلو." />
+
                 </LinearLayout>
 
                 <View style="@style/JDivider" />
