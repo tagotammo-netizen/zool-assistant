@@ -13,7 +13,11 @@ import java.io.OutputStream
  * talking ([SpeechGate]) and then hands that sound — including the moment before, so "زول" is not cut — to the
  * speech recogniser through a pipe. The recogniser is asked once per sentence instead of every few seconds.
  */
-class MicGate(private val onSpeech: () -> Unit, private val onUtterance: (ByteArray) -> Unit = {}) {
+class MicGate(
+    private val onSpeech: () -> Unit,
+    private val onUtterance: (ByteArray) -> Unit = {},
+    private val onSilenced: () -> Unit = {},
+) {
 
     companion object {
         const val RATE = 16_000
@@ -45,6 +49,15 @@ class MicGate(private val onSpeech: () -> Unit, private val onUtterance: (ByteAr
     /** Last time sound frames arrived: the watchdog checks the ear is alive. */
     @Volatile var lastFrame = 0L
         private set
+    /** Android gives only zeros (another app holds the microphone, or Zol is not allowed to hear right now). */
+    @Volatile var silenced = false
+        private set
+    /** The loudest moment in the last seconds, for the status screen. */
+    @Volatile var peak = 0.0
+        private set
+    private var zeroSince = -1L
+    /** Which microphone input: 0 = for speech recognition, 1 = the plain microphone. */
+    var source = 0
 
     private val gate = SpeechGate()
 
@@ -64,7 +77,8 @@ class MicGate(private val onSpeech: () -> Unit, private val onUtterance: (ByteAr
         if (running) return true
         val min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val r = try {
-            AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, RATE, AudioFormat.CHANNEL_IN_MONO,
+            AudioRecord(if (source == 0) MediaRecorder.AudioSource.VOICE_RECOGNITION else MediaRecorder.AudioSource.MIC,
+                RATE, AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT, maxOf(min, FRAME * 10))
         } catch (_: Exception) { return false }
         if (r.state != AudioRecord.STATE_INITIALIZED) { r.release(); return false }
@@ -113,6 +127,12 @@ class MicGate(private val onSpeech: () -> Unit, private val onUtterance: (ByteAr
             if (n <= 0) { if (n < 0) SystemClock.sleep(50); continue }
             val now = SystemClock.elapsedRealtime()
             lastFrame = now
+            val heard = SpeechGate.level(buf, n)
+            peak = maxOf(heard, peak * 0.995)
+            if (heard < 1.0) {                                   // pure digital silence, not a quiet room
+                if (zeroSince < 0) zeroSince = now
+                if (!silenced && now - zeroSince > 4_000) { silenced = true; onSilenced() }
+            } else { zeroSince = -1L; silenced = false }
             val out = sink
             if (out != null) {
                 if (now > sinkUntil) { detach(); continue }

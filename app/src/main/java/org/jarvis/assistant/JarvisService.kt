@@ -533,7 +533,7 @@ class JarvisService : AccessibilityService() {
 
     /** Listen with Zol's own ear; the recogniser is asked only when someone talks. */
     private fun gateListen() {
-        val e = ear ?: MicGate({ main.post { gateSession() } }, { pcm -> cloudHeard(pcm) }).also { ear = it }
+        val e = ear ?: newEar().also { ear = it }
         e.captureMode = false
         if (!e.active && !e.start()) {
             gateFailed = true
@@ -597,6 +597,40 @@ class JarvisService : AccessibilityService() {
         return true
     }
 
+    private var silencedTries = 0
+
+    private fun newEar() = MicGate({ main.post { gateSession() } }, { pcm -> cloudHeard(pcm) }, { main.post { earSilenced() } })
+        .also { it.source = silencedTries % 2 }
+
+    /**
+     * Android gives Zol's microphone only silence. Usually another app holds it (a voice assistant such as YOYO or
+     * "Hey Google" listening), or the phone stopped Zol hearing in the background. Try the other microphone input once,
+     * then say plainly what to check.
+     */
+    private fun earSilenced() {
+        silencedTries++
+        ear?.stop()
+        ear = null
+        if (silencedTries <= 2) {
+            log("المايك جايب سكوت تام. بجرب مدخل المايك التاني.")
+            if (listening) listenOnce()
+            return
+        }
+        log("أندرويد ما مدّي زول صوت من المايك (سكوت تام). الأسباب الغالبة: مساعد صوتي تاني ماسك المايك " +
+            "(YOYO أو «Hey Google»: اقفل الاستماع بتاعو)، أو زول ما مسموح ليهو يسمع في الخلفية " +
+            "(اقفل خدمة زول وافتحها تاني، واتأكد إنو إشعار «أستمع» ظاهر).")
+        silencedTries = 0
+        main.postDelayed({ if (listening) listenOnce() }, 60_000)
+    }
+
+    /** For the status screen: is sound reaching Zol's own ear? */
+    fun micState(): String = when {
+        !listening -> "الاستماع مقفول"
+        ear == null || ear?.active != true -> "بيستعمل محرك الاستماع مباشرة"
+        ear?.silenced == true -> "سكوت تام: أندرويد ما مدّي زول صوت"
+        else -> "بيسمع (أعلى صوت ${ear?.peak?.toInt() ?: 0})"
+    }
+
     // ------------------------------------------------------------------ listening through Gemini
 
     private var cloudSttUntil = 0L               // Google refused: Gemini writes down what is said, for a while
@@ -612,7 +646,7 @@ class JarvisService : AccessibilityService() {
     /** The ear records each sentence on the phone; only the sentence (not the silence) goes to Gemini. */
     private fun cloudListen() {
         cancelRecognition()
-        val e = ear ?: MicGate({ main.post { gateSession() } }, { pcm -> cloudHeard(pcm) }).also { ear = it }
+        val e = ear ?: newEar().also { ear = it }
         e.captureMode = true
         if (!e.active && !e.start()) {
             cloudSttUntil = 0L

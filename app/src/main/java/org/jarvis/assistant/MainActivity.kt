@@ -684,6 +684,9 @@ class MainActivity : AppCompatActivity() {
                 if (granted(Manifest.permission.RECORD_AUDIO)) "مسموح" else "امنح الإذن") { askPermissions() },
             Check("الاتصال والرسائل", allPermissions(), if (allPermissions()) "مسموح" else "امنح الأذونات") { askPermissions() },
             Check("العمل في الخلفية", batteryOk(), if (batteryOk()) "مسموح" else "اسمح") { requestBatteryExemption() },
+            Check("المايك", service?.micState()?.startsWith("بيسمع"), service?.micState() ?: "الخدمة مقفولة") {
+                service?.listeningChanged()
+            },
             (service?.stopsToday() ?: 0).let { stops ->
                 Check("الاستمرارية", if (service == null) null else stops == 0,
                     if (stops == 0) "ما وقف اليوم" else "وقف $stops مرة اليوم") { openKeepAlive() }
