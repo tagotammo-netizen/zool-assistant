@@ -135,6 +135,14 @@ class FeaturesActivity : AppCompatActivity() {
                     ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1)
                 else if (service.listening) service.stopListening() else service.startListening()
             }
+            "mictest" -> {
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
+                    ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1)
+                else {
+                    service.micTest()
+                    Toast.makeText(this, "بعد الصفارة قول: زول كم الساعة (مرتين)", Toast.LENGTH_LONG).show()
+                }
+            }
             "head" -> {
                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED)
                     ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 2)

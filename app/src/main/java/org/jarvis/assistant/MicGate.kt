@@ -60,8 +60,11 @@ class MicGate(
     @Volatile var speechPeak = 0.0
         private set
     val gain get() = SpeechGate.gainFor(speechPeak)
-    /** Which microphone input: 0 = for speech recognition, 1 = the plain microphone. */
-    var source = 0
+    /**
+     * Which microphone input: 1 = the plain microphone (with the phone's own volume boost), 0 = the input meant for
+     * speech recognition (unprocessed; on some phones very quiet). The microphone test picks the better one.
+     */
+    var source = 1
 
     private val gate = SpeechGate()
 

@@ -29,7 +29,12 @@ import android.graphics.RectF
 import android.graphics.drawable.GradientDrawable
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.annotation.SuppressLint
+import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioRecord
+import android.media.AudioTrack
+import android.media.MediaRecorder
 import android.media.ToneGenerator
 import android.media.MediaPlayer
 import android.net.ConnectivityManager
@@ -600,7 +605,7 @@ class JarvisService : AccessibilityService() {
     private var silencedTries = 0
 
     private fun newEar() = MicGate({ main.post { gateSession() } }, { pcm -> cloudHeard(pcm) }, { main.post { earSilenced() } })
-        .also { it.source = silencedTries % 2 }
+        .also { it.source = (prefs.getInt("mic_source", 1) + silencedTries) % 2 }
 
     /**
      * Android gives Zol's microphone only silence. Usually another app holds it (a voice assistant such as YOYO or
@@ -621,6 +626,107 @@ class JarvisService : AccessibilityService() {
             "(اقفل خدمة زول وافتحها تاني، واتأكد إنو إشعار «أستمع» ظاهر).")
         silencedTries = 0
         main.postDelayed({ if (listening) listenOnce() }, 60_000)
+    }
+
+    /**
+     * The microphone test: records 3 seconds from each microphone input while the person speaks, measures the room
+     * and the voice, keeps the clearer input, and plays back what Zol heard (made louder, as it is sent).
+     * Everything measured goes in the chat, so a report shows it.
+     */
+    fun micTest() {
+        main.post {
+            if (!granted(Manifest.permission.RECORD_AUDIO)) { log("لا يوجد إذن للميكروفون."); return@post }
+            val wasListening = listening
+            if (listening) stopListening(false)
+            say(t("اختبار المايك. بعد الصفارة قول: زول كم الساعة. وبعد الصفارة التانية قولها تاني.",
+                "Microphone test. After each beep say: Zol, what time is it."))
+            Thread {
+                SystemClock.sleep(6_000)
+                val results = ArrayList<Triple<Int, Pair<Double, Double>, ByteArray>>()
+                for (source in listOf(1, 0)) {
+                    main.post { beep(1) }
+                    SystemClock.sleep(400)
+                    val (levels, pcm) = recordFor(source, 3_000)
+                    results.add(Triple(source, SpeechGate.stats(levels), pcm))
+                }
+                main.post {
+                    beep(2)
+                    val name = { s: Int -> if (s == 1) "المايك العادي" else "مدخل التعرّف" }
+                    val lines = results.map { (src, st, pcm) ->
+                        if (pcm.isEmpty()) "${name(src)}: ما اشتغل"
+                        else "${name(src)}: سكوت ${st.first.toInt()}، كلام ${st.second.toInt()} (×${"%.1f".format(st.second / maxOf(st.first, 1.0))})"
+                    }
+                    val best = results.filter { it.third.isNotEmpty() }.maxByOrNull { it.second.second / maxOf(it.second.first, 1.0) }
+                    log("اختبار المايك: " + lines.joinToString(" • "))
+                    if (best == null) {
+                        log("ولا مدخل مايك اشتغل. في تطبيق تاني ماسك المايك، أو أندرويد مانع زول.")
+                    } else {
+                        prefs.edit().putInt("mic_source", best.first).apply()
+                        val clear = best.second.second / maxOf(best.second.first, 1.0)
+                        log("اخترت ${name(best.first)}." + when {
+                            best.second.second < 30 -> " بس الصوت الواصل ضعيف شديد: قرّب التلفون أو اتأكد إنو المايك ما مغطّي."
+                            clear < 2.0 -> " الكلام ما واضح من صوت الغرفة: جرّب في مكان أهدأ أو قرّب التلفون."
+                            else -> " الصوت واضح."
+                        })
+                        playBack(best.third, SpeechGate.gainFor(best.second.second))
+                    }
+                    ear?.stop(); ear = null; silencedTries = 0
+                    if (wasListening) main.postDelayed({ startListening(false) }, 4_000)
+                }
+            }.start()
+        }
+    }
+
+    /** Loudness of every 20 ms, and the sound itself. Empty when the input does not work. */
+    @SuppressLint("MissingPermission")
+    private fun recordFor(source: Int, ms: Long): Pair<List<Double>, ByteArray> {
+        val rate = MicGate.RATE
+        val frame = rate / 50 * 2
+        val r = try {
+            AudioRecord(if (source == 1) MediaRecorder.AudioSource.MIC else MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
+                maxOf(AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT), frame * 10))
+        } catch (_: Exception) { return emptyList<Double>() to ByteArray(0) }
+        if (r.state != AudioRecord.STATE_INITIALIZED) { r.release(); return emptyList<Double>() to ByteArray(0) }
+        val levels = ArrayList<Double>()
+        val out = java.io.ByteArrayOutputStream()
+        try {
+            r.startRecording()
+            val buf = ByteArray(frame)
+            val end = SystemClock.elapsedRealtime() + ms
+            while (SystemClock.elapsedRealtime() < end) {
+                val n = r.read(buf, 0, buf.size)
+                if (n <= 0) continue
+                levels.add(SpeechGate.level(buf, n))
+                out.write(buf, 0, n)
+            }
+        } catch (_: Exception) {
+        } finally {
+            try { r.stop() } catch (_: Exception) {}
+            r.release()
+        }
+        return levels to out.toByteArray()
+    }
+
+    /** Play a recording back, made louder the way it is sent to the recogniser. */
+    private fun playBack(pcm: ByteArray, gain: Double) {
+        val loud = pcm.copyOf()
+        SpeechGate.amplify(loud, loud.size, gain)
+        try {
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_ASSISTANT).build())
+                .setAudioFormat(AudioFormat.Builder().setSampleRate(MicGate.RATE).setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .setBufferSizeInBytes(loud.size)
+                .build()
+            track.write(loud, 0, loud.size)
+            track.play()
+            main.postDelayed({ try { track.release() } catch (_: Exception) {} }, loud.size / (MicGate.RATE * 2 / 1000L) + 500)
+            log("دا الصوت الزول سمعو (بعد التكبير).")
+        } catch (e: Exception) {
+            log("ما قدرت أسمّعك التسجيل: ${e.message}")
+        }
     }
 
     /** For the status screen: is sound reaching Zol's own ear? */

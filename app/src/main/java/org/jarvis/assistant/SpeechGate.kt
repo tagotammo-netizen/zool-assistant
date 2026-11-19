@@ -10,7 +10,7 @@ import kotlin.math.sqrt
  */
 class SpeechGate(
     private val minLevel: Double = 40.0,      // never trigger on anything quieter (16-bit RMS; some phones give speech at ~80)
-    private val ratio: Double = 3.0,          // this many times the room's noise
+    private val ratio: Double = 2.5,          // this many times the room's noise
     private val needMs: Long = 140,           // loud for this long = speech, not a click
 ) {
     /** The room's noise, learnt while nobody speaks. */
@@ -43,6 +43,14 @@ class SpeechGate(
 
     companion object {
         const val STEADY_MS = 4_000L
+
+        /** From the loudness of each 20 ms of a recording: (room noise, speech) as the 20th and 97th percentiles. */
+        fun stats(levels: List<Double>): Pair<Double, Double> {
+            if (levels.isEmpty()) return 0.0 to 0.0
+            val sorted = levels.sorted()
+            fun at(q: Double) = sorted[((sorted.size - 1) * q).toInt()]
+            return at(0.2) to at(0.97)
+        }
 
         /** How much to amplify a quiet microphone so speech reaches a normal level (about 3000 RMS). */
         fun gainFor(speechPeak: Double) = (3000.0 / maxOf(speechPeak, 60.0)).coerceIn(1.0, 16.0)

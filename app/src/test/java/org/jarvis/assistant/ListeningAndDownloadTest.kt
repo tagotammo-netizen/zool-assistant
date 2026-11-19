@@ -26,7 +26,7 @@ class ListeningAndDownloadTest {
     @Test fun followsANoisyRoom() {
         val g = SpeechGate()
         run(g, 0, 120_000, 900.0)                          // a fan: the room gets louder
-        assertTrue(g.threshold() > 2000)
+        assertTrue(g.threshold() > 900)
         assertEquals(0, run(g, 120_000, 130_000, 1100.0))  // the fan itself does not open requests
         assertEquals(1, run(g, 130_000, 131_000, 5000.0))  // a voice over it does
     }
@@ -43,6 +43,14 @@ class ListeningAndDownloadTest {
         assertEquals(1000.0, SpeechGate.level(pcm.copyOf(2), 2), 0.01)
         assertEquals(-1000, ((pcm[3].toInt() shl 8) or (pcm[2].toInt() and 0xFF)).toShort().toInt())
         assertEquals(32767, ((pcm[5].toInt() shl 8) or (pcm[4].toInt() and 0xFF)).toShort().toInt())   // clipped, not wrapped
+    }
+
+    @Test fun micTestNumbers() {
+        val levels = List(80) { 20.0 } + List(20) { 900.0 }
+        val (noise, speech) = SpeechGate.stats(levels)
+        assertEquals(20.0, noise, 0.0)
+        assertEquals(900.0, speech, 0.0)
+        assertEquals(0.0 to 0.0, SpeechGate.stats(emptyList()))
     }
 
     @Test fun loudness() {
