@@ -636,48 +636,62 @@ class JarvisService : AccessibilityService() {
         }.start()
     }
 
-    /** Gemini writes down the sentence, through the OpenAI-compatible endpoint (audio as WAV). Off the main thread. */
+    private var cloudFailures = 0
+
+    /**
+     * Gemini writes down the sentence. Gemini's own API (generateContent with the WAV inline), which takes audio
+     * for every Gemini model; the OpenAI-compatible address answered 404 for audio. Off the main thread.
+     */
     private fun transcribe(pcm: ByteArray): String? {
-        val base = prefs.getString("ai_url", "").orEmpty().trim().trimEnd('/')
         val key = prefs.getString("ai_key", "").orEmpty().trim()
+        val model = prefs.getString("ai_model", "").orEmpty().trim().removePrefix("models/").ifEmpty { "gemini-2.5-flash" }
         return try {
             val audio = android.util.Base64.encodeToString(MicGate.wav(pcm), android.util.Base64.NO_WRAP)
-            val user = JSONArray()
-                .put(JSONObject().put("type", "text").put("text", "Transcribe this."))
-                .put(JSONObject().put("type", "input_audio").put("input_audio", JSONObject().put("data", audio).put("format", "wav")))
             val body = JSONObject()
-                .put("model", prefs.getString("ai_model", "").orEmpty().trim().ifEmpty { "gemini-2.5-flash" })
-                .put("temperature", 0)
-                .put("max_tokens", 120)
-                .put("reasoning_effort", "none")
-                .put("messages", JSONArray()
-                    .put(JSONObject().put("role", "system").put("content",
-                        "Write down exactly the words spoken in the audio, in the language and dialect spoken (usually Sudanese Arabic, " +
-                        "sometimes English). Arabic in Arabic letters. Output only the words, no quotes, no translation, no comments. " +
-                        "If there is no clear speech, output nothing."))
-                    .put(JSONObject().put("role", "user").put("content", user)))
-            val con = URL("$base/chat/completions").openConnection() as HttpURLConnection
+                .put("system_instruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text",
+                    "Write down exactly the words spoken in the audio, in the language and dialect spoken (usually Sudanese Arabic, " +
+                    "sometimes English). Arabic in Arabic letters. Output only the words, no quotes, no translation, no comments. " +
+                    "If there is no clear speech, output nothing."))))
+                .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray()
+                    .put(JSONObject().put("inline_data", JSONObject().put("mime_type", "audio/wav").put("data", audio)))
+                    .put(JSONObject().put("text", "Transcribe.")))))
+                .put("generationConfig", JSONObject().put("temperature", 0).put("maxOutputTokens", 200).apply {
+                    if (model.startsWith("gemini-2.5-flash")) put("thinkingConfig", JSONObject().put("thinkingBudget", 0))
+                })
+            val con = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent").openConnection() as HttpURLConnection
             con.requestMethod = "POST"
             con.doOutput = true
             con.connectTimeout = 8000
             con.readTimeout = 20000
             con.setRequestProperty("Content-Type", "application/json")
-            con.setRequestProperty("Authorization", "Bearer $key")
+            con.setRequestProperty("x-goog-api-key", key)
             con.outputStream.use { it.write(body.toString().toByteArray()) }
             val code = con.responseCode
-            if (code == 429) {
+            if (code !in 200..299) {
+                // Google's own explanation (never contains the key), so the report says what is wrong
+                val why = try { con.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty() } catch (_: Exception) { "" }
+                val msg = Regex("\"message\"\\s*:\\s*\"([^\"]{0,160})").find(why)?.groupValues?.get(1) ?: why.take(160)
                 con.disconnect()
                 main.post {
-                    log("Gemini وصل حدّو في الدقيقة/اليوم. برجع لاستماع Google.")
-                    cloudSttUntil = 0L
-                    if (listening) resume(2_000)
+                    cloudFailures++
+                    if (code == 429) log("Gemini وصل حدّو في الدقيقة أو اليوم. برجع لاستماع Google.")
+                    else log("Gemini رد بـ $code: $msg")
+                    if (code == 429 || cloudFailures >= 3) {
+                        if (code != 429) log("وقّفت الاستماع عن طريق Gemini بعد 3 أخطاء، برجع لـ Google.")
+                        cloudSttUntil = 0L
+                        prefs.edit().putBoolean("stt_cloud", false).apply()
+                        cloudFailures = 0
+                        if (listening) { ear?.captureMode = false; resume(2_000) }
+                    }
                 }
                 return null
             }
-            if (code !in 200..299) throw Exception("HTTP $code")
             val raw = con.inputStream.bufferedReader().use { it.readText() }
             con.disconnect()
-            JSONObject(raw).getJSONArray("choices").getJSONObject(0).getJSONObject("message").optString("content")
+            main.post { cloudFailures = 0 }
+            val parts = JSONObject(raw).optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
+                ?: return ""
+            (0 until parts.length()).joinToString(" ") { parts.getJSONObject(it).optString("text") }
                 .replace(Regex("[\"«»]"), "").trim()
         } catch (e: Exception) {
             main.post { log("ما قدرت أرسل الصوت لـ Gemini: ${e.message}") }
