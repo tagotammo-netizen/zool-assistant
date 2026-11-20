@@ -43,6 +43,9 @@ sealed class Cmd {
     data class HomeStatus(val device: String) : Cmd()
     object Caregiver : Cmd()
     data class Media(val kind: String) : Cmd()               // playpause, next, prev
+    data class PlayVideo(val query: String) : Cmd()          // "شغل في اليوتيوب ..." : search and play the first video
+    data class Seek(val forward: Boolean) : Cmd()            // ten seconds on or back
+    data class SeeScreen(val question: String) : Cmd()       // a picture of the screen goes to a model that can see
     data class Photo(val seconds: Int) : Cmd()
     data class OpenChat(val name: String) : Cmd()
     data class Dictation(val start: Boolean) : Cmd()
@@ -324,6 +327,14 @@ object Commands {
         listOf("اضغط هنا", "دوس هنا", "اكبس هنا", "tap here", "click here") to Cmd.GridHere,
         listOf("ابلغ المرافق", "ابلغ اهلي", "نبه المرافق", "خبر المرافق", "ارسل للمرافق", "notify caregiver", "tell my caregiver") to Cmd.Caregiver,
         listOf("افتحه", "افتحها", "افتح التطبيق مره ثانيه", "open it", "open it again") to Cmd.OpenApp("به"),
+        listOf("وصف الصوره", "وصف لي الصوره", "اوصف الصوره", "اوصف لي الصوره", "صف الصوره", "صف لي الصوره", "شنو في الصوره",
+            "الصوره فيها شنو", "شنو الصوره دي", "الصوره دي شنو", "شوف الصوره", "شوف لي الصوره", "شوف الشاشه", "شوف لي الشاشه",
+            "وصف الشاشه بالتفصيل", "وصف لي الشاشه بالتفصيل", "describe the picture", "describe the image", "describe the photo",
+            "what is in the picture", "what is in the image", "look at the screen") to Cmd.SeeScreen(""),
+        listOf("قدم شويه", "قدم الفيديو", "قدم لقدام", "قدم عشره ثواني", "قدم عشر ثواني", "قدمو شويه", "اتقدم شويه",
+            "skip forward", "fast forward", "forward ten seconds") to Cmd.Seek(true),
+        listOf("رجع شويه", "رجع الفيديو", "رجع لورا", "رجع عشره ثواني", "رجع عشر ثواني", "رجعو شويه",
+            "rewind", "back ten seconds") to Cmd.Seek(false),
         listOf("اقرا الشاشه", "اقرا لي الشاشه", "اقرا لي", "اقرا", "شنو المكتوب", "المكتوب شنو", "read screen", "read the screen", "read") to Cmd.ReadScreen,
         listOf("وين انا", "اين انا", "انا وين", "اي تطبيق", "شنو التطبيق ده", "where am i") to Cmd.Describe(true),
         listOf("ماذا علي الشاشه", "شنو في الشاشه", "شنو علي الشاشه", "صف الشاشه", "صف لي الشاشه", "وصف الشاشه",
@@ -587,6 +598,24 @@ object Commands {
     }
 
     /** "لما اقول جيب الواتس يعني افتح الواتساب": the person teaches a sentence by voice. */
+    private val YOUTUBE = setOf("اليوتيوب", "يوتيوب", "youtube", "اليوتوب", "يوتوب")
+
+    /**
+     * "شغل في اليوتيوب عثمان حسين" / "شغل عثمان حسين في اليوتيوب" / "شغل لي فيديو طبخ" / "play cats on youtube":
+     * what to look for on YouTube; the first video is then played.
+     */
+    private fun playVideoOf(w: List<String>): Cmd.PlayVideo? {
+        rest(w, "شغل لي في اليوتيوب", "شغل في اليوتيوب", "شغل لي في يوتيوب", "شغل في يوتيوب", "شغل لي من اليوتيوب",
+            "شغل من اليوتيوب", "شغل لي فيديو", "شغل فيديو", "شغل لي مقطع", "شغل مقطع", "افتح فيديو", "play on youtube", "play video")
+            ?.let { q -> trimTail(q).takeIf { it.isNotBlank() }?.let { return Cmd.PlayVideo(it) } }
+        val lead = rest(w, "شغل لي", "شغل", "شغلي", "play") ?: return null
+        val rw = words(lead)
+        if (rw.size < 3 || normalize(rw.last()) !in YOUTUBE) return null
+        if (normalize(rw[rw.size - 2]) !in setOf("في", "علي", "من", "on", "in")) return null
+        val q = rw.dropLast(2).joinToString(" ").trim()
+        return if (q.isEmpty()) null else Cmd.PlayVideo(q)
+    }
+
     fun teachOf(text: String): Cmd.Teach? {
         val w = words(text)
         val lead = rest(w, "لما اقول", "لما قلت", "لو قلت", "اذا قلت", "متين ما اقول", "كل ما اقول", "when i say", "if i say") ?: return null
@@ -631,6 +660,7 @@ object Commands {
         // home scenes: "شغل مشهد النوم"
         rest(w, "شغل مشهد", "فعل مشهد", "شغل وضع", "فعل وضع", "مشهد", "run scene", "scene")?.let { return Cmd.Scene(it) }
 
+        playVideoOf(w)?.let { return it }
         // "ابحث في اليوتيوب عن قطط" / "search in youtube for cats"
         rest(w, "ابحث في", "ابحث علي", "ابحث ب", "search in", "search on")?.let { r ->
             val rw = words(r)

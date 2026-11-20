@@ -1451,6 +1451,196 @@ class JarvisService : AccessibilityService() {
         return t("حاضر.", "Done.")
     }
 
+    // ------------------------------------------------------------------ YouTube
+
+    private val youtube = "com.google.android.youtube"
+
+    /** Look for it on YouTube and play the first video (not an advert) in the results. */
+    private fun playVideo(query: String): String {
+        val app = Intent(Intent.ACTION_SEARCH).setPackage(youtube)
+            .putExtra(android.app.SearchManager.QUERY, query).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        try {
+            startActivity(app)
+        } catch (_: Exception) {
+            return try {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(query)))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                t("تطبيق يوتيوب ما موجود، فتحت البحث في المتصفح.", "YouTube is not installed; I opened the search in the browser.")
+            } catch (_: Exception) { t("ما قدرت أفتح يوتيوب.", "I could not open YouTube.") }
+        }
+        playFirstVideo(0)
+        return t("بفتش في يوتيوب عن $query.", "Looking on YouTube for $query.")
+    }
+
+    private fun playFirstVideo(tries: Int) {
+        main.postDelayed({
+            val nodes = screenNodes(3000).filter { it.packageName?.toString() == youtube && it.isVisibleToUser }
+            val item = nodes.firstOrNull { MediaHelp.isVideo("${it.contentDescription ?: ""} ${it.text ?: ""}") }
+            when {
+                item != null -> {
+                    press(item)
+                    respond(t("شغّلتو. قول: وقّف، أو قدّم شوية، أو رجّع شوية، أو الفيديو الجاي.",
+                        "Playing. Say: pause, skip forward, rewind, or next video."))
+                }
+                tries < 3 -> playFirstVideo(tries + 1)
+                else -> respond(t("فتحت نتايج البحث بس ما لقيت فيديو أضغطو. قول: الأرقام، واختار رقم الفيديو.",
+                    "The results are open but I found no video to tap. Say: numbers, then pick one."))
+            }
+        }, if (tries == 0) 3500L else 1500L)
+    }
+
+    /**
+     * Ten seconds on or back. In YouTube: a double tap on the right (or left) of the player, like a finger would;
+     * elsewhere the media keys most players understand.
+     */
+    private fun seek(forward: Boolean): String {
+        if (rootInActiveWindow?.packageName?.toString() == youtube) {
+            val dm = resources.displayMetrics
+            val player = screenNodes(2500)
+                .filter { it.viewIdResourceName?.contains("player") == true }
+                .map { n -> Rect().also { n.getBoundsInScreen(it) } }
+                .filter { it.width() > dm.widthPixels / 2 && it.height() > 100 }
+                .maxByOrNull { it.width() * it.height() }
+                ?: Rect(0, dm.heightPixels / 12, dm.widthPixels, dm.heightPixels / 12 + dm.widthPixels * 9 / 16)
+            val x = player.left + player.width() * (if (forward) 0.82f else 0.18f)
+            val y = player.exactCenterY()
+            val tap = { Path().apply { moveTo(x, y); lineTo(x + 1f, y) } }
+            dispatchGesture(GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(tap(), 0, 50))
+                .addStroke(GestureDescription.StrokeDescription(tap(), 160, 50)).build(), null, null)
+            return t(if (forward) "قدّمت عشرة ثواني." else "رجّعت عشرة ثواني.", if (forward) "Ten seconds on." else "Ten seconds back.")
+        }
+        val code = if (forward) KeyEvent.KEYCODE_MEDIA_FAST_FORWARD else KeyEvent.KEYCODE_MEDIA_REWIND
+        val audio = getSystemService(AUDIO_SERVICE) as AudioManager
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+        return t("حاضر.", "Done.")
+    }
+
+    // ------------------------------------------------------------------ "describe the picture"
+
+    /**
+     * A picture of the screen goes to a model that can see (Llama 4 on Groq, or Gemini), which says in a few words
+     * what is in it: a photo in a chat, a video, a page. Needs the same permission as sending the screen text.
+     */
+    private fun seeScreen(question: String): String {
+        screenConsent()?.let { return it }
+        if (Build.VERSION.SDK_INT < 30) return askScreen(question.ifBlank { "وصف ما على الشاشة" })
+        try {
+            takeScreenshot(android.view.Display.DEFAULT_DISPLAY, mainExecutor, object : TakeScreenshotCallback {
+                override fun onSuccess(shot: ScreenshotResult) {
+                    val image = try {
+                        val hw = android.graphics.Bitmap.wrapHardwareBuffer(shot.hardwareBuffer, shot.colorSpace)
+                        val soft = hw?.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+                        hw?.recycle()
+                        soft
+                    } catch (_: Exception) { null } finally { try { shot.hardwareBuffer.close() } catch (_: Exception) {} }
+                    if (image == null) { respond(t("ما قدرت أقرا صورة الشاشة.", "I could not read the screenshot.")); return }
+                    Thread {
+                        val answer = vision(jpeg(image), question)
+                        main.post {
+                            respond(if (answer.isNullOrBlank()) t("ما قدرت أعرف شنو في الشاشة.", "I could not tell what is on the screen.") else answer)
+                        }
+                    }.start()
+                }
+
+                override fun onFailure(code: Int) {
+                    respond(t("ما قدرت أصوّر الشاشة (رمز $code). لو أول مرة: اقفل خدمة زول في إمكانية الوصول وافتحها تاني.",
+                        "I could not take a screenshot (code $code). If this is the first time: turn Zol off and on in Accessibility."))
+                }
+            })
+        } catch (e: Exception) {
+            return t("ما قدرت أصوّر الشاشة: ${e.message}", "I could not take a screenshot: ${e.message}")
+        }
+        return t("لحظة، بشوف الشاشة.", "One moment, looking at the screen.")
+    }
+
+    /** At most 1280 pixels on the long side, as JPEG in base64: small enough to send quickly. */
+    private fun jpeg(bitmap: android.graphics.Bitmap): String {
+        val scale = minOf(1f, 1280f / maxOf(bitmap.width, bitmap.height))
+        val small = if (scale < 1f) android.graphics.Bitmap.createScaledBitmap(bitmap,
+            (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true) else bitmap
+        val out = java.io.ByteArrayOutputStream()
+        small.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, out)
+        if (small !== bitmap) small.recycle()
+        bitmap.recycle()
+        return android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
+    }
+
+    /** The model that looks at pictures: on Groq a vision model from its list (kept), elsewhere the chosen model. */
+    private fun visionModel(base: String, key: String): String? {
+        if (!base.contains("groq.com")) return prefs.getString("ai_model", "").orEmpty().trim().ifEmpty { null }
+        prefs.getString("vision_model", null)?.let { return it }
+        val ids = try {
+            val con = URL("$base/models").openConnection() as HttpURLConnection
+            con.connectTimeout = 8000
+            con.readTimeout = 10000
+            con.setRequestProperty("Authorization", "Bearer $key")
+            val raw = if (con.responseCode in 200..299) con.inputStream.bufferedReader().use { it.readText() } else ""
+            con.disconnect()
+            val arr = if (raw.isEmpty()) JSONArray() else JSONObject(raw).optJSONArray("data") ?: JSONArray()
+            (0 until arr.length()).map { arr.getJSONObject(it).optString("id") }
+        } catch (_: Exception) { emptyList() }
+        val m = MediaHelp.bestVisionModel(ids) ?: return null
+        prefs.edit().putString("vision_model", m).apply()
+        return m
+    }
+
+    /** Ask the model what is in the picture. Off the main thread. */
+    private fun vision(image: String, question: String, retried: Boolean = false): String? {
+        var base = prefs.getString("ai_url", "").orEmpty().trim().trimEnd('/')
+        if (!base.startsWith("http")) base = "http://$base"
+        val key = prefs.getString("ai_key", "").orEmpty().trim()
+        val model = visionModel(base, key) ?: run {
+            main.post { log("السيرفر الذكي ما عندو موديل بيشوف الصور.") }
+            return null
+        }
+        return try {
+            val ask = question.ifBlank { t("وصف لي الشاشة دي، وخصوصاً الصورة أو الفيديو لو في.", "Describe this screen, especially any picture or video.") }
+            val body = JSONObject()
+                .put("model", model)
+                .put("temperature", 0.2)
+                .put("max_tokens", 300)
+                .put("messages", JSONArray()
+                    .put(JSONObject().put("role", "system").put("content",
+                        "You look at a phone screenshot for a person who cannot use their hands well, and say what is in it. " +
+                        "Describe the picture or video first (people, place, things, any writing in it), then anything important on the screen. " +
+                        "Ignore the status bar and any floating button. At most three short sentences, " +
+                        "in the language and dialect of the question (Sudanese Arabic when the question is Arabic)."))
+                    .put(JSONObject().put("role", "user").put("content", JSONArray()
+                        .put(JSONObject().put("type", "text").put("text", ask))
+                        .put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", "data:image/jpeg;base64,$image"))))))
+            if (base.contains("generativelanguage.googleapis.com")) body.put("reasoning_effort", if (model.startsWith("gemini-2.5")) "none" else "low")
+            val con = URL("$base/chat/completions").openConnection() as HttpURLConnection
+            con.requestMethod = "POST"
+            con.doOutput = true
+            con.connectTimeout = 8000
+            con.readTimeout = 45000
+            con.setRequestProperty("Content-Type", "application/json")
+            if (key.isNotEmpty()) con.setRequestProperty("Authorization", "Bearer $key")
+            con.outputStream.use { it.write(body.toString().toByteArray()) }
+            val code = con.responseCode
+            if (code !in 200..299) {
+                val why = try { con.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty() } catch (_: Exception) { "" }
+                con.disconnect()
+                if ((code == 404 || code == 400) && !retried && base.contains("groq.com") && why.contains("model", true)) {
+                    prefs.edit().remove("vision_model").apply()          // retired: take another from the list
+                    return vision(image, question, true)
+                }
+                val msg = Regex("\"message\"\\s*:\\s*\"([^\"]{0,140})").find(why)?.groupValues?.get(1) ?: why.take(140)
+                main.post { log("الموديل «$model» ما قدر يشوف الصورة ($code): $msg") }
+                return null
+            }
+            val raw = con.inputStream.bufferedReader().use { it.readText() }
+            con.disconnect()
+            JSONObject(raw).getJSONArray("choices").getJSONObject(0).getJSONObject("message").optString("content")
+                .substringAfterLast("</think>").trim()
+        } catch (e: Exception) {
+            main.post { log("ما قدرت أرسل صورة الشاشة: ${e.message}") }
+            null
+        }
+    }
+
     private fun takePhoto(seconds: Int): String {
         try {
             startActivity(Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -3161,6 +3351,9 @@ class JarvisService : AccessibilityService() {
             is Cmd.Recall -> recall(c.query)
             is Cmd.Forget -> forget(c.query)
             is Cmd.Media -> media(c.kind)
+            is Cmd.PlayVideo -> playVideo(c.query)
+            is Cmd.Seek -> seek(c.forward)
+            is Cmd.SeeScreen -> seeScreen(c.question)
             is Cmd.Photo -> takePhoto(c.seconds)
             is Cmd.OpenChat -> openChat(c.name)
             is Cmd.Dictation -> if (c.start) startDictation() else { dictating = false; t("انتهى الإملاء.", "Dictation finished.") }
