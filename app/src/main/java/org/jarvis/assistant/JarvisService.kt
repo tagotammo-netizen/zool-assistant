@@ -620,8 +620,30 @@ class JarvisService : AccessibilityService() {
     private var silencedTries = 0
 
     private fun newEar() = MicGate({ main.post { gateSession() } }, { pcm -> cloudHeard(pcm) }, { main.post { earSilenced() } },
-        { session -> androidSilences(session) })
-        .also { it.source = (prefs.getInt("mic_source", 1) + silencedTries) % 2 }
+        { session -> androidSilences(session) }, voiceDetector())
+        .also { it.source = MicSources.order(prefs.getInt("ear_source", MicSources.CALL), silencedTries) }
+
+    private var detector: VoiceDetector? = null
+    private var detectorTried = false
+
+    /** The voice-or-noise model, loaded once (null on a phone where it cannot run: loudness decides then). */
+    private fun voiceDetector(): VoiceDetector? {
+        if (!detectorTried) {
+            detectorTried = true
+            detector = VoiceDetector.create(assets)
+            if (detector == null) log("ما قدرت أشغّل مميّز الكلام من الضجة، بستعمل علو الصوت بس.")
+        }
+        return detector
+    }
+
+    /** What Zol said lately, so hearing it back from the speaker is not taken as a command. */
+    private val ownVoice = OwnVoice()
+
+    /** Another app is playing sound (music, a video): then "زول" must open the sentence, not just appear in it. */
+    private fun othersPlaying(): Boolean {
+        if (quran?.playing == true || clipPlayer != null || findPlayer != null) return false
+        return try { (getSystemService(AUDIO_SERVICE) as AudioManager).isMusicActive } catch (_: Exception) { false }
+    }
 
     /** Android's own answer: is it giving this recording silence? (Zeros alone can be a quiet room on some phones.) */
     private fun androidSilences(session: Int): Boolean = if (Build.VERSION.SDK_INT < 29) true else try {
@@ -638,8 +660,8 @@ class JarvisService : AccessibilityService() {
         silencedTries++
         ear?.stop()
         ear = null
-        if (silencedTries <= 2) {
-            log("المايك جايب سكوت تام. بجرب مدخل المايك التاني.")
+        if (silencedTries < MicSources.ALL.size) {
+            log("المايك جايب سكوت تام. بجرب مدخل مايك تاني.")
             if (listening) listenOnce()
             return
         }
@@ -660,12 +682,12 @@ class JarvisService : AccessibilityService() {
             if (!granted(Manifest.permission.RECORD_AUDIO)) { log("لا يوجد إذن للميكروفون."); return@post }
             val wasListening = listening
             if (listening) stopListening(false)
-            say(t("اختبار المايك. بعد الصفارة قول: زول كم الساعة. وبعد الصفارة التانية قولها تاني.",
-                "Microphone test. After each beep say: Zol, what time is it."))
+            say(t("اختبار المايك. بعد كل صفارة قول: زول كم الساعة. حتسمع تلاتة صفارات.",
+                "Microphone test. After each of the three beeps say: Zol, what time is it."))
             Thread {
                 SystemClock.sleep(6_000)
                 val results = ArrayList<Triple<Int, Pair<Double, Double>, ByteArray>>()
-                for (source in listOf(1, 0)) {
+                for (source in MicSources.ALL) {
                     main.post { beep(1) }
                     SystemClock.sleep(400)
                     val (levels, pcm) = recordFor(source, 3_000)
@@ -673,17 +695,19 @@ class JarvisService : AccessibilityService() {
                 }
                 main.post {
                     beep(2)
-                    val name = { s: Int -> if (s == 1) "المايك العادي" else "مدخل التعرّف" }
+                    val name = { s: Int -> MicSources.name(s) }
                     val lines = results.map { (src, st, pcm) ->
                         if (pcm.isEmpty()) "${name(src)}: ما اشتغل"
                         else "${name(src)}: سكوت ${st.first.toInt()}، كلام ${st.second.toInt()} (×${"%.1f".format(st.second / maxOf(st.first, 1.0))})"
                     }
-                    val best = results.filter { it.third.isNotEmpty() }.maxByOrNull { it.second.second / maxOf(it.second.first, 1.0) }
+                    val pick = MicSources.choose(results.filter { it.third.isNotEmpty() }
+                        .associate { it.first to (it.second.second to it.second.second / maxOf(it.second.first, 1.0)) })
+                    val best = results.firstOrNull { it.first == pick }
                     log("اختبار المايك: " + lines.joinToString(" • "))
                     if (best == null) {
                         log("ولا مدخل مايك اشتغل. في تطبيق تاني ماسك المايك، أو أندرويد مانع زول.")
                     } else {
-                        prefs.edit().putInt("mic_source", best.first).apply()
+                        prefs.edit().putInt("ear_source", best.first).apply()
                         val clear = best.second.second / maxOf(best.second.first, 1.0)
                         log("اخترت ${name(best.first)}." + when {
                             best.second.second < 30 -> " بس الصوت الواصل ضعيف شديد: قرّب التلفون أو اتأكد إنو المايك ما مغطّي."
@@ -705,7 +729,7 @@ class JarvisService : AccessibilityService() {
         val rate = MicGate.RATE
         val frame = rate / 50 * 2
         val r = try {
-            AudioRecord(if (source == 1) MediaRecorder.AudioSource.MIC else MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            AudioRecord(MicSources.android(source),
                 rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
                 maxOf(AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT), frame * 10))
         } catch (_: Exception) { return emptyList<Double>() to ByteArray(0) }
@@ -756,7 +780,9 @@ class JarvisService : AccessibilityService() {
         !listening -> "الاستماع مقفول"
         ear == null || ear?.active != true -> "بيستعمل محرك الاستماع مباشرة"
         ear?.silenced == true -> "سكوت تام: أندرويد ما مدّي زول صوت"
-        else -> "بيسمع (أعلى صوت ${ear?.speechPeak?.toInt() ?: 0}، تكبير ×${"%.1f".format(ear?.gain ?: 1.0)})"
+        else -> "بيسمع (أعلى صوت ${ear?.speechPeak?.toInt() ?: 0}، تكبير ×${"%.1f".format(ear?.gain ?: 1.0)}" +
+            (if (ear?.echoCancel == true) "، ما بيسمع صوت التلفون" else "") +
+            (if (detector != null) "، بيميّز الكلام من الضجة" else "") + ")"
     }
 
     // ------------------------------------------------------------------ listening through Gemini
@@ -2700,6 +2726,14 @@ class JarvisService : AccessibilityService() {
     private fun processResults(list: List<String>) {
         run {
             val heard = list.firstOrNull().orEmpty()
+            val now = SystemClock.elapsedRealtime()
+            // Zol's own voice coming back from the speaker is not a command
+            if (heard.isNotBlank() && ownVoice.isEcho(heard, now) && list.none { Commands.isEmergency(it) }) { resume(200); return }
+            // a song or video playing on the phone says "زول" too: then the sentence must start with it
+            val inMode = wellbeing != null || findPlayer != null || game != null || translating || beads != null ||
+                trainQueue != null || dictating || (pending != null && now < pendingUntil) || now < awakeUntil
+            if (!inMode && heard.isNotBlank() && othersPlaying() && list.none { Commands.isEmergency(it) } &&
+                list.none { Commands.wakeAtStart(it) }) { resume(200); return }
             if (wellbeing != null && heard.isNotBlank()) {               // the answer to "are you alright?"
                 log("سمعت: $heard")
                 markActive()
@@ -3834,6 +3868,7 @@ class JarvisService : AccessibilityService() {
                 log("لا أستطيع نطق العربية: صوتها غير منزّل في الهاتف.")
             }
             // a reply recorded in a Sudanese voice is played instead of the engine
+            ownVoice.said(text, SystemClock.elapsedRealtime())
             val clip = if (arabic && prefs.getBoolean("voice_clips", true)) voiceFile(text).takeIf { it.length() > 0 } else null
             if (clip != null && (!add || (engine.isSpeaking != true && clipPlayer == null)) && playClip(clip)) return
             engine.language = if (arabic) Locale.forLanguageTag("ar") else Locale.US

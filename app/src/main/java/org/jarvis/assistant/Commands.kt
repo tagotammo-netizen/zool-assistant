@@ -529,6 +529,16 @@ object Commands {
     fun isEmergency(text: String) = has(normalize(text), *EMERGENCY.toTypedArray())
 
     /** Returns the command part if the wake word was said ("" if only the wake word), else null. */
+    /** The wake word opens the sentence ("زول …", "يا زول …"): a stricter test, while the phone plays sound. */
+    fun wakeAtStart(text: String): Boolean {
+        val w = words(text)
+        if (w.isEmpty()) return false
+        val start = if (w.size > 1 && normalize(w[0]) in WAKE_LEAD) 1 else 0
+        val n = normalize(w[start])
+        return n in WAKE || n in chosenWake || skeleton(w[start]) in WAKE_SOUNDS ||
+            (start + 1 < w.size && normalize(w[start] + w[start + 1]).let { it in WAKE || it in chosenWake })
+    }
+
     fun stripWake(text: String): String? {
         val w = words(text)
         // a chosen everyday word like "زول" wakes only at the start ("زول افتح…", "يا زول افتح…") or at the end,

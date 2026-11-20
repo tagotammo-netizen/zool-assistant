@@ -19,6 +19,8 @@ class MicGate(
     private val onSilenced: () -> Unit = {},
     /** Android says it is giving this recording silence (another app has the microphone). */
     private val androidSilenced: (session: Int) -> Boolean = { false },
+    /** Tells a voice from noise; without it, loudness alone decides. */
+    private val voice: VoiceDetector? = null,
 ) {
 
     companion object {
@@ -62,11 +64,12 @@ class MicGate(
     @Volatile var speechPeak = 0.0
         private set
     val gain get() = SpeechGate.gainFor(speechPeak)
-    /**
-     * Which microphone input: 1 = the plain microphone (with the phone's own volume boost), 0 = the input meant for
-     * speech recognition (unprocessed; on some phones very quiet). The microphone test picks the better one.
-     */
-    var source = 1
+    /** Which microphone input ([MicSources]): the call input by default, which does not hear the phone's own sound. */
+    var source = MicSources.CALL
+    /** The phone removes its own sound (echo) from what Zol hears. */
+    @Volatile var echoCancel = false
+        private set
+    private val effects = ArrayList<android.media.audiofx.AudioEffect>()
 
     private val gate = SpeechGate()
 
@@ -86,12 +89,14 @@ class MicGate(
         if (running) return true
         val min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val r = try {
-            AudioRecord(if (source == 0) MediaRecorder.AudioSource.VOICE_RECOGNITION else MediaRecorder.AudioSource.MIC,
+            AudioRecord(MicSources.android(source),
                 RATE, AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT, maxOf(min, FRAME * 10))
         } catch (_: Exception) { return false }
         if (r.state != AudioRecord.STATE_INITIALIZED) { r.release(); return false }
-        try { r.startRecording() } catch (_: Exception) { r.release(); return false }
+        attachEffects(r.audioSessionId)
+        try { r.startRecording() } catch (_: Exception) { releaseEffects(); r.release(); return false }
+        voice?.reset()
         record = r
         running = true
         thread = Thread({ loop(r) }, "zol-ear").also { it.start() }
@@ -105,6 +110,27 @@ class MicGate(
         thread = null
         record?.let { try { it.stop() } catch (_: Exception) {}; it.release() }
         record = null
+        releaseEffects()
+    }
+
+    /** The phone's echo remover and noise remover, on any input that has them. */
+    private fun attachEffects(session: Int) {
+        releaseEffects()
+        try {
+            if (android.media.audiofx.AcousticEchoCanceler.isAvailable())
+                android.media.audiofx.AcousticEchoCanceler.create(session)?.let { it.enabled = true; effects.add(it); echoCancel = it.enabled }
+        } catch (_: Throwable) {}
+        try {
+            if (android.media.audiofx.NoiseSuppressor.isAvailable())
+                android.media.audiofx.NoiseSuppressor.create(session)?.let { it.enabled = true; effects.add(it) }
+        } catch (_: Throwable) {}
+        if (source == MicSources.CALL) echoCancel = true          // the call input cancels echo by itself
+    }
+
+    private fun releaseEffects() {
+        effects.forEach { try { it.release() } catch (_: Throwable) {} }
+        effects.clear()
+        echoCancel = false
     }
 
     /**
@@ -149,6 +175,8 @@ class MicGate(
                     if (androidSilenced(r.audioSessionId)) { silenced = true; onSilenced() } else zeroSince = now
                 }
             } else { zeroSince = -1L; silenced = false }
+            val wasSpeaking = voice?.speaking == true
+            if (voice != null && !(muted || now < quietUntil)) try { voice.feed(buf, n) } catch (_: Throwable) {}
             val out = sink
             if (out != null) {
                 if (now > sinkUntil) { detach(); continue }
@@ -163,7 +191,8 @@ class MicGate(
                 val loud = buf.copyOf(n)
                 SpeechGate.amplify(loud, n, gain)      // a quiet microphone is made loud enough to understand
                 rec.write(loud, 0, n)
-                if (level < gate.threshold() * 0.7) { if (quietSince < 0) quietSince = now } else quietSince = -1L
+                val still = if (voice != null) !voice.speaking else level < gate.threshold() * 0.7
+                if (still) { if (quietSince < 0) quietSince = now } else quietSince = -1L
                 val long = now - captureStart
                 if ((quietSince > 0 && now - quietSince > END_SILENCE_MS && long > 600) || long > MAX_SENTENCE_MS) {
                     capture = null
@@ -173,9 +202,12 @@ class MicGate(
                 continue
             }
             if (muted || now < quietUntil) { wasQuiet = true; continue }
-            if (wasQuiet) { preRoll.take(); gate.reset(); wasQuiet = false }   // never send Zol's own voice
+            if (wasQuiet) { preRoll.take(); gate.reset(); voice?.reset(); wasQuiet = false }   // never send Zol's own voice
             preRoll.add(buf, n)
-            if (gate.feed(SpeechGate.level(buf, n), now)) {
+            val loudEnough = gate.feed(heard, now)
+            // a voice starts: the detector says so (noise does not count), or loudness alone when there is none
+            val starts = if (voice != null) voice.speaking && !wasSpeaking && heard >= 6.0 else loudEnough
+            if (starts) {
                 if (captureMode) {
                     capture = java.io.ByteArrayOutputStream(RATE * 2 * 4).also {
                         val pre = preRoll.take()
