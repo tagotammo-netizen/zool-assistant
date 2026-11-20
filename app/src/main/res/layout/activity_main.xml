@@ -817,6 +817,15 @@
                         style="@style/JSwitch"
                         android:text="قراءة الرسائل والمكالمات الواردة بصوت عالٍ" />
 
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchVoiceNotes"
+                        style="@style/JSwitch"
+                        android:text="اقرا لي رسايل واتساب الصوتية مكتوبة" />
+
+                    <TextView
+                        style="@style/JNote"
+                        android:text="لمن تجيك رسالة صوتية، زول بيكتب الكلام الفيها (Groq Whisper) ويقراهو ليك. محتاج مفتاح Groq وإذن الملفات عشان يلقى ملف الرسالة. وفي أي وقت قول: زول اقرا الرسالة الصوتية." />
+
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnNotifAccess"
                         style="@style/JTonal"

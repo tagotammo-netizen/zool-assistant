@@ -46,6 +46,12 @@ sealed class Cmd {
     data class PlayVideo(val query: String) : Cmd()          // "شغل في اليوتيوب ..." : search and play the first video
     data class Seek(val forward: Boolean) : Cmd()            // ten seconds on or back
     data class SeeScreen(val question: String) : Cmd()       // a picture of the screen goes to a model that can see
+    data class FindPhone(val on: Boolean) : Cmd()            // "انت وين؟": ring loud and flash, to be found
+    data class Game(val kind: String) : Cmd()                // riddle, quran
+    data class Translate(val text: String) : Cmd()           // Arabic to English, anything else to Arabic
+    data class TranslateMode(val on: Boolean) : Cmd()        // every sentence heard is translated and said
+    object VoiceNote : Cmd()                                 // the last WhatsApp voice message, written out and read
+    data class VoiceMessage(val name: String) : Cmd()        // record a voice message and send it on WhatsApp
     data class Photo(val seconds: Int) : Cmd()
     data class OpenChat(val name: String) : Cmd()
     data class Dictation(val start: Boolean) : Cmd()
@@ -273,6 +279,9 @@ object Commands {
     /** Fixed phrases, in priority order: the first group that appears in the sentence wins. */
     private val FIXED: List<Pair<List<String>, Cmd>> = listOf(
         // Sudanese everyday phrasings, checked before the general ones below
+        listOf("اقرا الرساله الصوتيه", "اقرا لي الرساله الصوتيه", "شنو في الرساله الصوتيه", "الرساله الصوتيه قالت شنو",
+            "فرغ الرساله الصوتيه", "فرغ لي الرساله الصوتيه", "اقرا الفويس", "اقرا لي الفويس", "الفويس قال شنو", "شنو في الفويس",
+            "read the voice message", "read the voice note") to Cmd.VoiceNote,
         listOf("الرسايل", "رسايلي", "شنو الرسايل", "في رسايل", "رسايل جديده", "الرسايل الجات", "الرسايل الجديده", "قريني الرسايل",
             "اقرا الرسايل", "منو اتصل", "مين اتصل", "منو الاتصل", "منو ضرب", "المكالمات الفايته", "فاتتني مكالمه", "في زول اتصل") to Cmd.ReadNotifs,
         listOf("امسح الكلمه دي", "امسح الكلمه", "امسح اخر كلمه", "شيل الكلمه", "شيل اخر كلمه", "احذف الكلمه") to Cmd.DeleteWord,
@@ -327,6 +336,12 @@ object Commands {
         listOf("اضغط هنا", "دوس هنا", "اكبس هنا", "tap here", "click here") to Cmd.GridHere,
         listOf("ابلغ المرافق", "ابلغ اهلي", "نبه المرافق", "خبر المرافق", "ارسل للمرافق", "notify caregiver", "tell my caregiver") to Cmd.Caregiver,
         listOf("افتحه", "افتحها", "افتح التطبيق مره ثانيه", "open it", "open it again") to Cmd.OpenApp("به"),
+        listOf("انت وين", "انتي وين", "وينك", "التلفون وين", "تلفوني وين", "وين التلفون", "وين تلفوني", "الموبايل وين",
+            "where are you", "find my phone", "find the phone") to Cmd.FindPhone(true),
+        listOf("لقيتك", "لقيتو", "لقيته", "لقيت التلفون", "found you", "found it", "found the phone") to Cmd.FindPhone(false),
+        listOf("مسابقه قران", "مسابقه القران", "اسالني في القران", "اختبرني في القران", "مسابقه", "quran quiz", "quiz") to Cmd.Game("quran"),
+        listOf("اديني لغز", "ادينا لغز", "احجيني", "حجيني", "احجيه", "حجوه", "حجوات", "الغاز", "لغز", "ونسني", "العب معاي",
+            "نلعب", "riddle", "tell me a riddle", "play a game") to Cmd.Game("riddle"),
         listOf("وصف الصوره", "وصف لي الصوره", "اوصف الصوره", "اوصف لي الصوره", "صف الصوره", "صف لي الصوره", "شنو في الصوره",
             "الصوره فيها شنو", "شنو الصوره دي", "الصوره دي شنو", "شوف الصوره", "شوف لي الصوره", "شوف الشاشه", "شوف لي الشاشه",
             "وصف الشاشه بالتفصيل", "وصف لي الشاشه بالتفصيل", "describe the picture", "describe the image", "describe the photo",
@@ -598,6 +613,28 @@ object Commands {
     }
 
     /** "لما اقول جيب الواتس يعني افتح الواتساب": the person teaches a sentence by voice. */
+    private val TRANSLATE_ON = setOf("وضع الترجمه", "شغل الترجمه", "ترجمه فوريه", "ترجم الكلام", "ترجم لي الكلام",
+        "translation mode", "start translating")
+    private val TRANSLATE_OFF = setOf("وقف الترجمه", "خلاص الترجمه", "اقفل الترجمه", "الغ الترجمه", "stop translating", "stop translation")
+
+    /** Translation ("ترجم لي انا عايز موية") and voice messages ("سجل لأمي"), checked before the other commands. */
+    private fun talkOf(w: List<String>, t: String): Cmd? {
+        if (t in TRANSLATE_ON) return Cmd.TranslateMode(true)
+        if (t in TRANSLATE_OFF) return Cmd.TranslateMode(false)
+        rest(w, "ترجم لي", "ترجم", "ترجمي", "قول بالانجليزي", "translate")?.let { r ->
+            val rw = words(r).toMutableList()
+            while (rw.size > 1 && normalize(rw.last()) in setOf("بالانجليزي", "بالعربي", "انجليزي", "english", "arabic")) rw.removeAt(rw.size - 1)
+            if (rw.size > 1 && normalize(rw.last()) in setOf("in", "to", "الي")) rw.removeAt(rw.size - 1)
+            val text = rw.joinToString(" ").trim()
+            if (text.isNotEmpty()) return Cmd.Translate(text)
+        }
+        rest(w, "سجل لي رساله صوتيه", "سجل رساله صوتيه", "ارسل رساله صوتيه", "رسل رساله صوتيه", "ابعت رساله صوتيه",
+            "ارسل لي رساله صوتيه", "رساله صوتيه", "ارسل فويس", "ابعت فويس", "سجل فويس", "سجل لي فويس", "فويس", "سجل لي", "سجل",
+            "record a voice message to", "record a voice message for", "voice message to", "voice message for", "record for")
+            ?.let { r -> Fun.voiceTarget(r).takeIf { it.isNotBlank() }?.let { return Cmd.VoiceMessage(trimTail(it)) } }
+        return null
+    }
+
     private val YOUTUBE = setOf("اليوتيوب", "يوتيوب", "youtube", "اليوتوب", "يوتوب")
 
     /**
@@ -660,6 +697,7 @@ object Commands {
         // home scenes: "شغل مشهد النوم"
         rest(w, "شغل مشهد", "فعل مشهد", "شغل وضع", "فعل وضع", "مشهد", "run scene", "scene")?.let { return Cmd.Scene(it) }
 
+        talkOf(w, t)?.let { return it }
         playVideoOf(w)?.let { return it }
         // "ابحث في اليوتيوب عن قطط" / "search in youtube for cats"
         rest(w, "ابحث في", "ابحث علي", "ابحث ب", "search in", "search on")?.let { r ->

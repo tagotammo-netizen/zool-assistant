@@ -96,7 +96,7 @@ class MainActivity : AppCompatActivity() {
         Triple(R.id.switchFall, "fall_on", false), Triple(R.id.switchVolumeKeys, "switch_volume", false),
         Triple(R.id.switchRemote, "remote_on", false), Triple(R.id.switchPronounce, "tts_pronounce", true),
         Triple(R.id.switchClips, "voice_clips", true), Triple(R.id.switchAutoUpdate, "auto_update", true),
-        Triple(R.id.switchCloudStt, "stt_cloud", false),
+        Triple(R.id.switchCloudStt, "stt_cloud", false), Triple(R.id.switchVoiceNotes, "vn_transcribe", false),
     )
 
     private val befores = listOf(R.id.beforeNow to 0, R.id.before10 to 10, R.id.before15 to 15)
@@ -431,6 +431,14 @@ class MainActivity : AppCompatActivity() {
                 if (loading) return@setOnCheckedChangeListener
                 prefs.edit().putBoolean(key, checked).apply()
                 if (id == R.id.switchReadNotifs && checked && !notificationAccess()) openNotificationAccess()
+                if (id == R.id.switchVoiceNotes && checked) {
+                    if (!notificationAccess()) openNotificationAccess()
+                    else if (JarvisService.instance?.filesAllowed() == false) {
+                        toast("اسمح لزول بالوصول للملفات عشان يلقى الرسايل الصوتية")
+                        JarvisService.instance?.openFilesAccess()
+                    }
+                    if (groqKeyMissing()) toast("محتاج مفتاح Groq: شغّل «اسمع عن طريق Groq Whisper» وحط المفتاح")
+                }
                 if (id == R.id.switchBubble) JarvisService.instance?.let { if (checked) it.showBubble() else it.hideBubble() }
                 if (key.startsWith("prayer_")) { ProactiveReceiver.schedulePrayer(this); renderPrayer() }
                 if (key == "remote_on" && checked) enableRemote()

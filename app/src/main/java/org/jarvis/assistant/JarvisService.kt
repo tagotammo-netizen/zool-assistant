@@ -835,7 +835,17 @@ class JarvisService : AccessibilityService() {
      * WAV file (OpenAI-style /audio/transcriptions). Pieces Whisper itself marks as "probably no speech" and the
      * sentences Whisper is known to invent from noise are dropped. Off the main thread.
      */
-    private fun groqTranscribe(pcm: ByteArray): String? {
+    private fun groqTranscribe(pcm: ByteArray): String? =
+        groqFile(MicGate.wav(pcm), "s.wav", "audio/wav", if (translating) null else listenLang(), forListening = true)
+
+    private fun listenLang() = if (prefs.getString("lang", "ar-SA").orEmpty().startsWith("en")) "en" else "ar"
+
+    /**
+     * Any sound file to Groq's Whisper. [lang] null: Whisper says which language it heard; anything but Arabic or
+     * English is taken as Sudanese heard wrong and asked again in Arabic. [listening]: errors count against the
+     * listening engine (three in a row turn Groq listening off).
+     */
+    private fun groqFile(audio: ByteArray, fileName: String, mime: String, lang: String?, forListening: Boolean = false): String? {
         val key = groqKey()
         if (key.isEmpty()) return null
         val boundary = "zol" + System.nanoTime()
@@ -844,7 +854,7 @@ class JarvisService : AccessibilityService() {
             con.requestMethod = "POST"
             con.doOutput = true
             con.connectTimeout = 8000
-            con.readTimeout = 15000
+            con.readTimeout = 15000 + audio.size / 2000            // a long voice message takes longer
             con.setRequestProperty("Authorization", "Bearer $key")
             con.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
             con.outputStream.use { out ->
@@ -853,12 +863,12 @@ class JarvisService : AccessibilityService() {
                 field("model", sttWhisperModel)
                 field("response_format", "verbose_json")
                 field("temperature", "0")
-                field("language", if (prefs.getString("lang", "ar-SA").orEmpty().startsWith("en")) "en" else "ar")   // guessing, Whisper took Sudanese for Icelandic
+                if (lang != null) field("language", lang)            // guessing, Whisper took Sudanese for Icelandic
                 // Sudanese words Zol hears every day: Whisper writes what it expects, so tell it what to expect
                 field("prompt", "${Commands.wakeWord}، كم الساعة؟ ${Commands.wakeWord} اتصل بأمي. ${Commands.wakeWord} افتح واتساب. " +
                     "${Commands.wakeWord} رد عليهو قول ليهو جاي. ${Commands.wakeWord} شغل القرآن. داير، عايز، هسع، شنو، وين، كدا، ياخ.")
-                out.write("--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"s.wav\"\r\nContent-Type: audio/wav\r\n\r\n".toByteArray())
-                out.write(MicGate.wav(pcm))
+                out.write("--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"$fileName\"\r\nContent-Type: $mime\r\n\r\n".toByteArray())
+                out.write(audio)
                 out.write("\r\n--$boundary--\r\n".toByteArray())
             }
             val code = con.responseCode
@@ -868,9 +878,10 @@ class JarvisService : AccessibilityService() {
                 con.disconnect()
                 if ((code == 404 || code == 400) && sttWhisperModel != "whisper-large-v3-turbo") {
                     sttWhisperModel = "whisper-large-v3-turbo"        // the full model is not offered any more
-                    return groqTranscribe(pcm)
+                    return groqFile(audio, fileName, mime, lang, forListening)
                 }
                 if (code == 429 || code >= 500) { cloudLog("Groq مزحوم (${if (code == 429) "وصل حدّو" else "$code"}). بحاول مع الجملة الجاية."); return null }
+                if (!forListening) { main.post { log("Groq رد بـ $code: $msg") }; return null }
                 main.post {
                     cloudFailures++
                     log("Groq رد بـ $code: $msg" + if (code == 401) " (المفتاح غلط)" else "")
@@ -886,8 +897,10 @@ class JarvisService : AccessibilityService() {
             }
             val raw = con.inputStream.bufferedReader().use { it.readText() }
             con.disconnect()
-            main.post { cloudFailures = 0 }
+            if (forListening) main.post { cloudFailures = 0 }
             val json = JSONObject(raw)
+            if (lang == null && json.optString("language").lowercase() !in setOf("arabic", "english", "ar", "en"))
+                return groqFile(audio, fileName, mime, "ar", forListening)
             val segs = json.optJSONArray("segments")?.let { a ->
                 (0 until a.length()).map { a.getJSONObject(it).let { o -> o.optString("text") to o.optDouble("no_speech_prob", 0.0) } }
             }
@@ -1449,6 +1462,365 @@ class JarvisService : AccessibilityService() {
         audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
         audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
         return t("حاضر.", "Done.")
+    }
+
+    // ------------------------------------------------------------------ "انت وين؟": find the phone
+
+    private var findPlayer: MediaPlayer? = null
+    private var findVolume = -1
+    private var torchOn = false
+    /** Ring two and a half seconds, then two seconds of quiet, so "لقيتك" can be heard between rings. */
+    private val findPulse = object : Runnable {
+        override fun run() {
+            val p = findPlayer ?: return
+            try { if (p.isPlaying) { p.pause(); ear?.muted = false } else { ear?.muted = true; p.start() } } catch (_: Exception) {}
+            main.postDelayed(this, if (p.isPlaying) 2_500L else 2_000L)
+        }
+    }
+    private val findBlink = object : Runnable {
+        override fun run() {
+            torchOn = !torchOn
+            torch(torchOn)
+            main.postDelayed(this, 350)
+        }
+    }
+    private val findTimeout = Runnable { stopFindPhone() }
+
+    /** Ring as loud as the phone can, with the flashlight blinking, for half a minute or until found. */
+    private fun findPhone(): String {
+        stopFindPhone()
+        val audio = getSystemService(AUDIO_SERVICE) as AudioManager
+        try {
+            findVolume = audio.getStreamVolume(AudioManager.STREAM_ALARM)
+            audio.setStreamVolume(AudioManager.STREAM_ALARM, audio.getStreamMaxVolume(AudioManager.STREAM_ALARM), 0)
+        } catch (_: Exception) { findVolume = -1 }
+        val tone = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_ALARM)
+            ?: android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE)
+        try {
+            findPlayer = MediaPlayer().apply {
+                setAudioAttributes(android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_ALARM)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+                setDataSource(this@JarvisService, tone)
+                isLooping = true
+                prepare()
+                start()
+            }
+        } catch (_: Exception) {
+            findPlayer = null
+            beep(3)
+        }
+        ear?.muted = true
+        main.post(findBlink)
+        main.postDelayed(findPulse, 2_500)
+        main.postDelayed(findTimeout, 30_000)
+        log("بصفّر عشان تلقاني. قول «لقيتك» أو أي كلام عشان أسكت.")
+        return ""
+    }
+
+    private fun stopFindPhone() {
+        main.removeCallbacks(findPulse)
+        if (findPlayer != null) ear?.muted = false
+        main.removeCallbacks(findBlink)
+        main.removeCallbacks(findTimeout)
+        if (torchOn) { torchOn = false; torch(false) }
+        val p = findPlayer ?: return
+        findPlayer = null
+        try { p.stop(); p.release() } catch (_: Exception) {}
+        if (findVolume >= 0) try {
+            (getSystemService(AUDIO_SERVICE) as AudioManager).setStreamVolume(AudioManager.STREAM_ALARM, findVolume, 0)
+        } catch (_: Exception) {}
+        findVolume = -1
+    }
+
+    private fun torch(on: Boolean) {
+        try {
+            val cameras = getSystemService(CAMERA_SERVICE) as CameraManager
+            cameras.cameraIdList.firstOrNull { cameras.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true }
+                ?.let { cameras.setTorchMode(it, on) }
+        } catch (_: Exception) {}
+    }
+
+    // ------------------------------------------------------------------ riddles and the Quran quiz
+
+    private class GameState(val kind: String) {
+        var question: Fun.Question? = null
+        var tries = 0
+        var right = 0
+        var asked = 0
+        val used = HashSet<String>()
+    }
+
+    private var game: GameState? = null
+    private val random = java.util.Random()
+    private val gameTimeout = Runnable { game?.let { endGame(t("وقفت اللعب عشان ما رديت.", "Game over, no answer.")) } }
+
+    private fun startGame(kind: String): String {
+        if (!granted(Manifest.permission.RECORD_AUDIO)) return t("لا يوجد إذن للميكروفون.", "Microphone permission missing.")
+        game = GameState(kind)
+        if (!listening) startListening(false)
+        val intro = if (kind == "quran") t("يلا مسابقة القرآن. جاوب من غير «زول»، وقول «ما عارف» عشان أوريك، و«خلاص» عشان نقيف.",
+            "Quran quiz. Answer without the wake word; say: I don't know, or: stop.")
+        else t("حجيتك ما بجيتك! جاوب من غير «زول»، وقول «ما عارف» عشان أوريك، و«خلاص» عشان نقيف.",
+            "Riddle time. Answer without the wake word; say: I don't know, or: stop.")
+        return intro + " " + nextQuestion()
+    }
+
+    /** The next question (not one already asked in this game). */
+    private fun nextQuestion(): String {
+        val g = game ?: return ""
+        var q: Fun.Question
+        var guard = 0
+        do {
+            q = if (g.kind == "quran") Fun.quranQuestion(random) else Fun.RIDDLES[random.nextInt(Fun.RIDDLES.size)]
+            guard++
+        } while (q.ask in g.used && guard < 40)
+        if (g.kind != "quran" && g.used.size >= Fun.RIDDLES.size) g.used.clear()
+        g.used.add(q.ask)
+        g.question = q
+        g.tries = 0
+        g.asked++
+        main.removeCallbacks(gameTimeout)
+        main.postDelayed(gameTimeout, 180_000)
+        return q.ask
+    }
+
+    private fun gameHeard(heard: String) {
+        val g = game ?: return
+        val q = g.question ?: return
+        main.removeCallbacks(gameTimeout)
+        main.postDelayed(gameTimeout, 180_000)
+        when {
+            Fun.stops(heard) -> endGame(null)
+            Fun.isRight(q, heard) -> { g.right++; respond(t("صاح! ${q.reveal}. ", "Right! ") + nextQuestion()) }
+            Fun.givesUp(heard) || Fun.skips(heard) -> respond(t("الإجابة: ${q.reveal}. ", "The answer: ${q.reveal}. ") + nextQuestion())
+            g.tries == 0 -> { g.tries++; respond(t("لا، جرّب تاني.", "No, try again.")) }
+            else -> respond(t("لا. الإجابة: ${q.reveal}. ", "No. The answer: ${q.reveal}. ") + nextQuestion())
+        }
+    }
+
+    private fun endGame(why: String?) {
+        val g = game ?: return
+        game = null
+        main.removeCallbacks(gameTimeout)
+        val answered = maxOf(g.asked - 1, g.right)                 // the question asked last was not answered
+        respond((why?.let { "$it " } ?: "") + Fun.score(g.right, answered))
+    }
+
+    // ------------------------------------------------------------------ translation
+
+    private var translating = false
+
+    private fun translateMode(on: Boolean): String {
+        if (on && !aiReady()) return t("الترجمة محتاجة الذكاء السحابي. أضف المفتاح من الإعدادات.", "Translation needs the smart server.")
+        translating = on
+        if (!on) return t("وقفت الترجمة.", "Translation off.")
+        if (!listening) startListening(false)
+        return t("وضع الترجمة: أي كلام بالعربي بقولو بالإنجليزي، وأي كلام بالإنجليزي بقولو بالعربي. قول «وقف الترجمة» عشان نقيف.",
+            "Translation mode: Arabic is said in English and English in Arabic. Say: stop translating.")
+    }
+
+    private fun translateHeard(heard: String) {
+        val n = Commands.normalize(heard).trim()
+        if (n in setOf("وقف الترجمه", "خلاص الترجمه", "اقفل الترجمه", "خلاص", "stop translating", "stop")) { respond(translateMode(false)); return }
+        log("سمعت: $heard")
+        translateOnce(heard).takeIf { it.isNotBlank() }?.let { respond(it) }
+    }
+
+    /** Arabic into English, anything else into Sudanese Arabic; said aloud in that language. */
+    private fun translateOnce(text: String): String {
+        if (!aiReady()) return t("الترجمة محتاجة الذكاء السحابي. أضف المفتاح من الإعدادات.", "Translation needs the smart server.")
+        val to = Fun.translateTo(text)
+        Thread {
+            val out = cloudChat("You are a translator. Translate the user's words into $to. Keep the meaning and the tone; " +
+                "for Sudanese Arabic use everyday Sudanese words. Output only the translation, nothing else.", text, 300)
+                ?.substringAfterLast("</think>")?.trim()?.trim('"', '«', '»')
+            main.post {
+                if (out.isNullOrBlank()) respond(t("ما قدرت أترجم.", "I could not translate."))
+                else { log("${Brand.NAME} ($to): $out"); say(out) }
+            }
+        }.start()
+        return ""
+    }
+
+    // ------------------------------------------------------------------ WhatsApp voice messages, written out
+
+    private var lastVoiceNote: String? = null
+
+    /** Where WhatsApp keeps voice messages (each week in its own folder). */
+    private fun voiceNoteDirs(): List<java.io.File> {
+        val root = android.os.Environment.getExternalStorageDirectory()
+        return listOf(
+            "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Voice Notes",
+            "Android/media/com.whatsapp.w4b/WhatsApp Business/Media/WhatsApp Business Voice Notes",
+            "WhatsApp/Media/WhatsApp Voice Notes",
+        ).map { java.io.File(root, it) }.filter { it.isDirectory }
+    }
+
+    fun filesAllowed(): Boolean = if (Build.VERSION.SDK_INT >= 30) android.os.Environment.isExternalStorageManager()
+        else granted(Manifest.permission.READ_EXTERNAL_STORAGE)
+
+    /** The newest voice message, at most [since] old (0: any). */
+    private fun newestVoiceNote(since: Long): java.io.File? = voiceNoteDirs()
+        .flatMap { d -> d.walkTopDown().maxDepth(2).filter { it.isFile && it.length() > 0 && (it.name.endsWith(".opus") || it.name.endsWith(".ogg")) }.toList() }
+        .filter { since == 0L || it.lastModified() >= since }
+        .maxByOrNull { it.lastModified() }
+
+    /**
+     * A voice message came from [from] (or the person asked for the last one: [from] is null): find the file, which
+     * WhatsApp may still be downloading, write it out with Whisper, and read it.
+     */
+    fun readVoiceNote(from: String?, postedAt: Long, tries: Int = 0): String {
+        if (groqKey().isEmpty()) return t("عشان أقرا الرسايل الصوتية محتاج مفتاح Groq (الإعدادات ← الاستماع).", "Reading voice messages needs a Groq key.")
+        if (!filesAllowed()) {
+            if (from == null) openFilesAccess()
+            return t("محتاج إذن الملفات عشان أقرا الرسايل الصوتية. فعّلو لزول وجرّب تاني.", "I need file access to read voice messages.")
+        }
+        val file = newestVoiceNote(if (postedAt > 0) postedAt - 90_000 else 0L)
+            ?.takeIf { from == null || it.absolutePath != lastVoiceNote }      // not the one read a moment ago
+        if (file == null) {
+            if (from != null && tries < 4) {        // still downloading
+                main.postDelayed({ readVoiceNote(from, postedAt, tries + 1).takeIf { it.isNotBlank() }?.let { announce(it, true) } }, 3_000)
+                return ""
+            }
+            return if (from != null) t("جاتك رسالة صوتية من $from، بس ما نزلت في التلفون. افتح المحادثة عشان تنزل.",
+                "A voice message from $from has not downloaded yet.")
+            else t("ما لقيت رسالة صوتية في التلفون.", "I found no voice message.")
+        }
+        lastVoiceNote = file.absolutePath
+        Thread {
+            val text = try {
+                groqFile(file.readBytes(), "voice.ogg", "audio/ogg", listenLang())
+            } catch (e: Exception) { null }
+            main.post {
+                val who = from?.let { t("رسالة صوتية من $it", "Voice message from $it") } ?: t("الرسالة الصوتية", "The voice message")
+                if (text.isNullOrBlank()) respond(t("$who: ما قدرت أفهم الكلام فيها.", "$who: I could not make out the words."))
+                else announce("$who: «$text»", true)
+            }
+        }.start()
+        return if (from == null) t("لحظة، بقرا الرسالة الصوتية.", "One moment.") else ""
+    }
+
+    /** From the notification reader. */
+    fun voiceNoteFrom(who: String, postedAt: Long) {
+        main.post { readVoiceNote(who, postedAt).takeIf { it.isNotBlank() }?.let { announce(it, true) } }
+    }
+
+    fun openFilesAccess() {
+        try {
+            val i = if (Build.VERSION.SDK_INT >= 30)
+                Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName"))
+            else Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+            startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: Exception) {}
+    }
+
+    // ------------------------------------------------------------------ recording a voice message by voice
+
+    private var recorder: MediaRecorder? = null
+    private var recordFile: java.io.File? = null
+
+    /**
+     * "سجل لأمي": Zol records after a beep until two seconds of quiet (a minute at most), asks, and sends the
+     * recording to that person on WhatsApp.
+     */
+    private fun recordVoiceMessage(name: String): String {
+        if (!granted(Manifest.permission.RECORD_AUDIO)) return t("لا يوجد إذن للميكروفون.", "Microphone permission missing.")
+        if (!granted(Manifest.permission.READ_CONTACTS)) return t("لا يوجد إذن لجهات الاتصال.", "Contacts permission missing.")
+        val pkg = whatsappPackage() ?: return t("واتساب غير مثبت.", "WhatsApp is not installed.")
+        val contact = resolveContact(name) ?: return t("لم أجد \"$name\" في جهات الاتصال.", "I cannot find \"$name\" in contacts.")
+        lastContact = contact.first
+        if (recorder != null) return t("في تسجيل شغّال هسع.", "Already recording.")
+        val wasListening = listening
+        if (listening) stopListening(false)
+        say(t("اتكلم بعد الصفارة. لمن تسكت شوية برسلها لـ${contact.first}.", "Speak after the beep. When you stop, I send it to ${contact.first}."))
+        main.postDelayed({ startRecording(contact, pkg, wasListening) }, 4_500)
+        return ""
+    }
+
+    @Suppress("DEPRECATION")
+    private fun startRecording(contact: Pair<String, String>, pkg: String, wasListening: Boolean) {
+        val dir = java.io.File(cacheDir, "voice").apply { mkdirs() }         // shared through the app's FileProvider
+        val ogg = Build.VERSION.SDK_INT >= 29
+        val file = java.io.File(dir, if (ogg) "zol-voice.ogg" else "zol-voice.m4a").apply { delete() }
+        val r = try {
+            (if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else MediaRecorder()).apply {
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+                if (ogg) { setOutputFormat(MediaRecorder.OutputFormat.OGG); setAudioEncoder(MediaRecorder.AudioEncoder.OPUS) }
+                else { setOutputFormat(MediaRecorder.OutputFormat.MPEG_4); setAudioEncoder(MediaRecorder.AudioEncoder.AAC) }
+                setAudioSamplingRate(16000)
+                setAudioEncodingBitRate(24000)
+                setOutputFile(file.absolutePath)
+                prepare()
+            }
+        } catch (e: Exception) {
+            respond(t("ما قدرت أسجّل: ${e.message}", "I could not record: ${e.message}"))
+            if (wasListening) startListening(false)
+            return
+        }
+        beep(1)
+        try { r.start() } catch (e: Exception) {
+            r.release(); respond(t("ما قدرت أسجّل: ${e.message}", "I could not record: ${e.message}"))
+            if (wasListening) startListening(false); return
+        }
+        recorder = r
+        recordFile = file
+        val started = SystemClock.elapsedRealtime()
+        var spoke = false
+        var quietSince = -1L
+        var floor = Int.MAX_VALUE
+        val poll = object : Runnable {
+            override fun run() {
+                val rec = recorder ?: return
+                val now = SystemClock.elapsedRealtime()
+                val amp = try { rec.maxAmplitude } catch (_: Exception) { 0 }
+                if (now - started < 600) floor = minOf(floor, amp)           // the room, before speaking
+                val loud = amp > maxOf(1_200, (if (floor == Int.MAX_VALUE) 0 else floor) * 3)
+                if (loud) { spoke = true; quietSince = -1L } else if (quietSince < 0) quietSince = now
+                val done = when {
+                    !spoke && now - started > 8_000 -> "none"
+                    spoke && quietSince > 0 && now - quietSince > 2_000 -> "ok"
+                    now - started > 60_000 -> "ok"
+                    else -> null
+                }
+                if (done == null) { main.postDelayed(this, 100); return }
+                finishRecording(done == "ok", now - started, contact, pkg, wasListening)
+            }
+        }
+        main.postDelayed(poll, 100)
+    }
+
+    private fun finishRecording(ok: Boolean, ms: Long, contact: Pair<String, String>, pkg: String, wasListening: Boolean) {
+        val r = recorder
+        recorder = null
+        try { r?.stop() } catch (_: Exception) {}
+        try { r?.release() } catch (_: Exception) {}
+        val file = recordFile
+        beep(2)
+        startListening(false)                                    // to hear the yes
+        if (!ok || file == null || file.length() < 500) {
+            file?.delete()
+            respond(t("ما سمعت حاجة، ما سجّلت.", "I heard nothing; nothing recorded."))
+            if (!wasListening) main.postDelayed({ stopListening(false) }, 3_000)
+            return
+        }
+        val secs = (ms / 1000).coerceAtLeast(1)
+        respond(ask(t("سجّلت $secs ثانية. أرسلها لـ${contact.first}؟ نعم أو لا.", "Recorded $secs seconds. Send to ${contact.first}? Yes or no."),
+            onNo = { file.delete(); t("ما أرسلتها.", "Not sent.") }) {
+            try {
+                val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", file)
+                startActivity(Intent(Intent.ACTION_SEND)
+                    .setType(if (file.name.endsWith(".ogg")) "audio/ogg" else "audio/mp4")
+                    .putExtra(Intent.EXTRA_STREAM, uri)
+                    .putExtra("jid", waNumber(contact.second) + "@s.whatsapp.net")      // straight into that chat
+                    .setPackage(pkg)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
+                pressSendSoon(4)
+                t("برسلها في واتساب.", "Sending on WhatsApp.")
+            } catch (e: Exception) {
+                t("ما قدرت أرسلها: ${e.message}", "Could not send it: ${e.message}")
+            }
+        })
     }
 
     // ------------------------------------------------------------------ YouTube
@@ -2105,6 +2477,14 @@ class JarvisService : AccessibilityService() {
                     list.any { Commands.normalize(it).let { n -> "ساعد" in n || "الحق" in n || "وجع" in n || "تعبان" in n } }
                 wellbeingAnswered(!bad)
                 return
+            }
+            if (heard.isNotBlank() && list.none { Commands.isEmergency(it) }) {
+                if (findPlayer != null) {                // the alarm itself is heard too: only words that mean "found"
+                    if (Fun.foundPhone(heard)) { log("سمعت: $heard"); stopFindPhone(); respond(t("الحمد لله.", "Good.")) }
+                    return
+                }
+                if (game != null) { log("سمعت: $heard"); gameHeard(Commands.stripWake(heard) ?: heard); return }
+                if (translating) { translateHeard(Commands.stripWake(heard) ?: heard); return }
             }
             if (trainQueue != null && heard.isNotBlank() && list.none { Commands.isEmergency(it) }) {
                 log("سمعت: $heard")
@@ -3354,6 +3734,12 @@ class JarvisService : AccessibilityService() {
             is Cmd.PlayVideo -> playVideo(c.query)
             is Cmd.Seek -> seek(c.forward)
             is Cmd.SeeScreen -> seeScreen(c.question)
+            is Cmd.FindPhone -> if (c.on) findPhone() else { stopFindPhone(); t("الحمد لله.", "Good.") }
+            is Cmd.Game -> startGame(c.kind)
+            is Cmd.Translate -> translateOnce(c.text)
+            is Cmd.TranslateMode -> translateMode(c.on)
+            Cmd.VoiceNote -> readVoiceNote(null, 0L)
+            is Cmd.VoiceMessage -> recordVoiceMessage(c.name)
             is Cmd.Photo -> takePhoto(c.seconds)
             is Cmd.OpenChat -> openChat(c.name)
             is Cmd.Dictation -> if (c.start) startDictation() else { dictating = false; t("انتهى الإملاء.", "Dictation finished.") }
@@ -3491,6 +3877,7 @@ class JarvisService : AccessibilityService() {
             is Cmd.DeleteReminder -> deleteReminder(c.name)
             is Cmd.Teach -> teach(c.phrase, c.meaning)
             Cmd.Hush -> {
+                stopFindPhone()
                 clipPlayer?.let { try { it.stop(); it.release() } catch (_: Exception) {} }
                 clipPlayer = null
                 val talking = tts?.isSpeaking == true || reading

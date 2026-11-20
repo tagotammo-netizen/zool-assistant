@@ -54,6 +54,11 @@ class JarvisNotifications : NotificationListenerService() {
         service.noteNotification("$who: $line")
         val action = n.actions?.firstOrNull { it.remoteInputs?.isNotEmpty() == true }
         service.noteReplyTarget(who, action, action?.remoteInputs?.firstOrNull())
+        // a WhatsApp voice message: written out and read, instead of "🎤 رسالة صوتية (0:12)"
+        if (Fun.isVoiceNote(line) && sbn.packageName.startsWith("com.whatsapp") && prefs.getBoolean("vn_transcribe", false)) {
+            service.voiceNoteFrom(who, sbn.postTime)
+            return
+        }
         if (speak) {
             val hint = if (action != null) " قل: رد بكذا، للرد." else ""
             service.announce("رسالة من $who: $line.$hint", true, urgent = important)
