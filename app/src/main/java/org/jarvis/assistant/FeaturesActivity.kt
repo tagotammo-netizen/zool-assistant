@@ -135,6 +135,40 @@ class FeaturesActivity : AppCompatActivity() {
                     ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1)
                 else if (service.listening) service.stopListening() else service.startListening()
             }
+            "pc" -> {
+                val need = if (android.os.Build.VERSION.SDK_INT >= 31) arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_ADVERTISE)
+                    else emptyArray()
+                if (need.any { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED })
+                    ActivityCompat.requestPermissions(this, need, 3)
+                else Toast.makeText(this, service.startPc(), Toast.LENGTH_LONG).show()
+            }
+            "dialects" -> {
+                Toast.makeText(this, "بشوف لهجات المجتمع…", Toast.LENGTH_SHORT).show()
+                service.communityDialects(null) { list ->
+                    if (isFinishing) return@communityDialects
+                    val names = list.map { it.name + if (it.about.isNotEmpty()) " — ${it.about}" else "" } +
+                        listOf("📤 شارك لهجتي مع زول", "🌍 رسّل لهجتي للمجتمع")
+                    AlertDialog.Builder(this)
+                        .setTitle("لهجات المجتمع")
+                        .setItems(names.toTypedArray()) { _, i ->
+                            when {
+                                i < list.size -> service.installCommunity(list[i])
+                                i == list.size -> service.handleText("شارك لهجتي")
+                                else -> service.handleText("رسل لهجتي للمجتمع")
+                            }
+                        }
+                        .setNegativeButton("إلغاء", null)
+                        .show()
+                }
+            }
+            "offline" -> {
+                val models = OfflinePack.MODELS
+                AlertDialog.Builder(this)
+                    .setTitle("الاستماع بدون نت")
+                    .setItems(models.map { it.title }.toTypedArray()) { _, i -> service.downloadWhisper(models[i].id) }
+                    .setNegativeButton("إلغاء", null)
+                    .show()
+            }
             "mictest" -> {
                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
                     ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1)

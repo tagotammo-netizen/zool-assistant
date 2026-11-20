@@ -60,6 +60,20 @@ sealed class Cmd {
     data class Rotate(val on: Boolean) : Cmd()               // auto-rotate
     data class KeepScreen(val on: Boolean) : Cmd()           // the screen stays on
     data class Calc(val text: String) : Cmd()
+    data class OfflinePack(val model: String) : Cmd()        // download listening without internet (base, small)
+    object Captions : Cmd()                                  // everything said, written in big letters
+    data class Learn(val name: String) : Cmd()               // start watching; the name may come at the end
+    data class LearnDone(val name: String) : Cmd()           // stop watching and keep it under this name
+    data class RunMacro(val name: String) : Cmd()
+    object ListMacros : Cmd()
+    data class ForgetMacro(val name: String) : Cmd()
+    data class ShareDialect(val community: Boolean) : Cmd()  // send what Zol learned: to someone, or to the community
+    object CommunityDialects : Cmd()
+    data class InstallDialect(val name: String) : Cmd()
+    object English : Cmd()                                   // a spoken English lesson
+    object VoiceBank : Cmd()
+    data class Pc(val what: String, val text: String = "") : Cmd()   // the phone as a computer's mouse and keyboard
+    data class Eyes(val on: Boolean) : Cmd()                 // winks drive the switch scanning
     data class Photo(val seconds: Int) : Cmd()
     data class OpenChat(val name: String) : Cmd()
     data class Dictation(val start: Boolean) : Cmd()
@@ -361,6 +375,25 @@ object Commands {
         listOf("وقف التدوير", "قفل التدوير", "الشاشه ما تلف", "ثبت الشاشه", "lock rotation") to Cmd.Rotate(false),
         listOf("خلي الشاشه شغاله", "خلي الشاشه ما تقفل", "ما تطفي الشاشه", "الشاشه ما تطفي", "keep the screen on", "keep screen on") to Cmd.KeepScreen(true),
         listOf("خلي الشاشه تقفل", "الشاشه تقفل عادي", "خلي الشاشه تطفي", "let the screen sleep") to Cmd.KeepScreen(false),
+        listOf("نزل الحزمه الكبيره", "حمل الحزمه الكبيره", "نزل حزمه بدون نت الكبيره") to Cmd.OfflinePack("small"),
+        listOf("نزل حزمه بدون نت", "حمل حزمه بدون نت", "نزل الاستماع بدون نت", "حمل الاستماع بدون نت", "نزل حزمه الاوفلاين",
+            "download offline pack") to Cmd.OfflinePack("base"),
+        listOf("اكتب الكلام", "اكتب لي الكلام", "اكتب الكلام البيتقال", "الكلام مكتوب", "الترجمه المكتوبه", "وضع الكتابه",
+            "ترجمه مكتوبه", "live captions", "captions") to Cmd.Captions,
+        listOf("رسل لهجتي للمجتمع", "ارسل لهجتي للمجتمع", "شارك لهجتي مع المجتمع", "contribute my dialect") to Cmd.ShareDialect(true),
+        listOf("شارك لهجتي", "صدر لهجتي", "ارسل لهجتي", "رسل لهجتي", "share my dialect") to Cmd.ShareDialect(false),
+        listOf("وصل الكمبيوتر", "اتحكم في الكمبيوتر", "ماوس الكمبيوتر", "الكمبيوتر بالراس", "وصل التلفزيون", "اتحكم في التلفزيون",
+            "computer mode", "connect the computer") to Cmd.Pc("on"),
+        listOf("افصل الكمبيوتر", "وقف الكمبيوتر", "خلاص الكمبيوتر", "افصل التلفزيون", "disconnect the computer") to Cmd.Pc("off"),
+        listOf("كليك يمين", "right click") to Cmd.Pc("right"),
+        listOf("كليك", "اضغط كليك", "دبل كليك", "click") to Cmd.Pc("click"),
+        listOf("انتر", "اضغط انتر", "enter") to Cmd.Pc("enter"),
+        listOf("باك سبيس", "امسح حرف", "backspace") to Cmd.Pc("back"),
+        listOf("اسكيب", "escape") to Cmd.Pc("esc"),
+        listOf("وقف التحكم بالعيون", "اقفل التحكم بالعيون", "stop eye control") to Cmd.Eyes(false),
+        listOf("التحكم بالعيون", "اتحكم بعيوني", "شغل التحكم بالعيون", "تحكم بالعيون", "eye control") to Cmd.Eyes(true),
+        listOf("بنك الصوت", "بنك صوتي", "سجل صوتي", "صوتي انا", "voice bank") to Cmd.VoiceBank,
+        listOf("لهجات المجتمع", "وريني اللهجات", "اللهجات الموجوده", "community dialects") to Cmd.CommunityDialects,
         listOf("انت وين", "انتي وين", "وينك", "التلفون وين", "تلفوني وين", "وين التلفون", "وين تلفوني", "الموبايل وين",
             "where are you", "find my phone", "find the phone") to Cmd.FindPhone(true),
         listOf("لقيتك", "لقيتو", "لقيته", "لقيت التلفون", "found you", "found it", "found the phone") to Cmd.FindPhone(false),
@@ -649,6 +682,22 @@ object Commands {
     }
 
     /** "لما اقول جيب الواتس يعني افتح الواتساب": the person teaches a sentence by voice. */
+    /** The names of the routines the person taught by showing; saying one runs it. */
+    @Volatile var macroNames: Set<String> = emptySet()
+
+    private fun macroOf(w: List<String>, t: String): Cmd? {
+        macroNames.firstOrNull { normalize(it).trim() == t }?.let { return Cmd.RunMacro(it) }
+        if (t in setOf("اتعلم", "اتعلم مني", "اتعلم حاجه جديده", "شوفني", "عاين لي", "سجل حركاتي", "learn this", "watch me")) return Cmd.Learn("")
+        if (t in setOf("خلصت", "خلاص اتعلم", "خلاص التعليم", "وقف التعليم", "اتعلمت", "done learning")) return Cmd.LearnDone("")
+        if (t in setOf("الحركات المحفوظه", "وريني الحركات", "شنو الاتعلمتو", "الحاجات الاتعلمتها", "my routines")) return Cmd.ListMacros
+        rest(w, "سميها", "سميه", "احفظها باسم", "احفظها", "call it", "name it")?.let { r -> if (r.isNotBlank()) return Cmd.LearnDone(trimTail(r)) }
+        rest(w, "اتعلم", "learn")?.let { r -> if (r.isNotBlank() && words(r).size <= 5) return Cmd.Learn(trimTail(r)) }
+        rest(w, "انسي الحركه", "امسح الحركه", "انسي", "forget the routine")?.let { r ->
+            macroNames.firstOrNull { normalize(it).trim() == normalize(r).trim() }?.let { return Cmd.ForgetMacro(it) }
+        }
+        return null
+    }
+
     private val TRANSLATE_ON = setOf("وضع الترجمه", "شغل الترجمه", "ترجمه فوريه", "ترجم الكلام", "ترجم لي الكلام",
         "translation mode", "start translating")
     private val TRANSLATE_OFF = setOf("وقف الترجمه", "خلاص الترجمه", "اقفل الترجمه", "الغ الترجمه", "stop translating", "stop translation")
@@ -749,6 +798,16 @@ object Commands {
         // home scenes: "شغل مشهد النوم"
         rest(w, "شغل مشهد", "فعل مشهد", "شغل وضع", "فعل وضع", "مشهد", "run scene", "scene")?.let { return Cmd.Scene(it) }
 
+        rest(w, "اكتب في الكمبيوتر", "اكتب للكمبيوتر", "اكتب في التلفزيون", "type on the computer")?.let { r ->
+            if (r.isNotBlank()) return Cmd.Pc("type", r)
+        }
+        if (t in setOf("رسل لهجتي للمجتمع", "ارسل لهجتي للمجتمع", "شارك لهجتي مع المجتمع", "contribute my dialect")) return Cmd.ShareDialect(true)
+        if (t in setOf("شارك لهجتي", "صدر لهجتي", "ارسل لهجتي", "رسل لهجتي", "share my dialect")) return Cmd.ShareDialect(false)
+        if (t in setOf("اكتب الكلام", "اكتب لي الكلام", "اكتب الكلام البيتقال", "اكتب لي الكلام البيتقال")) return Cmd.Captions
+        if (t in setOf("علمني انجليزي", "علمني الانجليزي", "درس انجليزي", "درس الانجليزي", "نتعلم انجليزي", "اتعلم انجليزي",
+                "عايز اتعلم انجليزي", "درسني انجليزي", "teach me english", "english lesson")) return Cmd.English
+        rest(w, "نزل لهجه", "ثبت لهجه", "حمل لهجه", "install dialect")?.let { r -> if (r.isNotBlank()) return Cmd.InstallDialect(trimTail(r)) }
+        macroOf(w, t)?.let { return it }
         talkOf(w, t)?.let { return it }
         rest(w, "نومني", "نوميني", "عايز انام", "داير انام")?.let { r -> sleepMinutes(r)?.let { return Cmd.Sleep(it) } }
         playVideoOf(w)?.let { return it }
@@ -954,7 +1013,8 @@ object Commands {
 
     /** Modes that take over listening (a game, the prayer beads, ringing...) start only when said plainly. */
     private fun neverGuessed(cmd: Cmd) = cmd is Cmd.Tasbeeh || cmd is Cmd.Sleep || cmd is Cmd.Game || cmd is Cmd.FindPhone ||
-        cmd is Cmd.TranslateMode || cmd is Cmd.KeepScreen || cmd is Cmd.Rotate || cmd is Cmd.Dim || cmd is Cmd.VoiceNote
+        cmd is Cmd.TranslateMode || cmd is Cmd.KeepScreen || cmd is Cmd.Rotate || cmd is Cmd.Dim || cmd is Cmd.VoiceNote || cmd is Cmd.Pc ||
+        cmd is Cmd.Eyes || cmd is Cmd.English || cmd is Cmd.Captions
 
     /** Last resort for a short sentence: a known phrase that sounds almost the same (one sound different). */
     private fun nearest(t: String, wordCount: Int): Cmd? {

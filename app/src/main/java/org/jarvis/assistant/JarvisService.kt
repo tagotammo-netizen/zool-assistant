@@ -197,6 +197,8 @@ class JarvisService : AccessibilityService() {
         Commands.setWake(prefs.getString("wake_word", "زول"))
         usePrayerPlace()
         initVoice()
+        Thread { OfflinePack.copyDetector(this, whisper.dir()) }.start()
+        main.postDelayed(habitTick, 60_000)
         log("الخدمة تعمل.")
         ProactiveReceiver.schedule(this)
         try { registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) } catch (_: Exception) {}
@@ -221,6 +223,7 @@ class JarvisService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        if (learning != null) watch(event)
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && switches?.running == true)
             main.postDelayed({ switches?.refresh() }, 500)
         if (head?.running != true) return
@@ -820,6 +823,10 @@ class JarvisService : AccessibilityService() {
     private fun cloudHeard(pcm: ByteArray) {
         val now = SystemClock.elapsedRealtime()
         if (cloudBusy || now - cloudLastAt < 1_500 || !listening) return
+        if (!online()) {                          // no internet: the offline engine, when its files are on the phone
+            main.post { if (!netTrouble()) cloudLog("النت قاطع. نزّل «الاستماع بدون نت» عشان زول يسمعك من غير نت.") }
+            return
+        }
         cloudBusy = true
         cloudLastAt = now
         Thread {
@@ -864,7 +871,7 @@ class JarvisService : AccessibilityService() {
      * sentences Whisper is known to invent from noise are dropped. Off the main thread.
      */
     private fun groqTranscribe(pcm: ByteArray): String? =
-        groqFile(MicGate.wav(pcm), "s.wav", "audio/wav", if (translating) null else listenLang(), forListening = true)
+        groqFile(MicGate.wav(pcm), "s.wav", "audio/wav", if (translating) null else if (lesson != null) "en" else listenLang(), forListening = true)
 
     private fun listenLang() = if (prefs.getString("lang", "ar-SA").orEmpty().startsWith("en")) "en" else "ar"
 
@@ -982,6 +989,22 @@ class JarvisService : AccessibilityService() {
             log("النت قاطع والاستماع محتاج نت. نزّل حزمة العربي بدون نت من الإعدادات ← الاستماع.")
         }
         return false
+    }
+
+    /** Download the offline listening files with a progress bar; when done, listening without internet is ready. */
+    fun downloadWhisper(model: String) {
+        val m = OfflinePack.MODELS.firstOrNull { it.id == model } ?: return
+        if (Downloads.get("offline-$model") != null) { log("التنزيل شغّال."); return }
+        log("بنزّل ${m.title}. التقدم ظاهر فوق. لو النت قطع، قول نفس الأمر تاني وبكمّل من وين وقف.")
+        OfflinePack.download(this, whisper.dir(), model) { error ->
+            main.post {
+                if (error == null) {
+                    resetWhisper()
+                    log("الاستماع بدون نت جاهز. لو النت قطع، زول بيسمعك براهو من غير نت.")
+                    say(t("الاستماع بدون نت جاهز.", "Offline listening is ready."))
+                } else log("ما كمل تنزيل الحزمة: $error")
+            }
+        }
     }
 
     fun whisperStatus(): String {
@@ -1849,6 +1872,481 @@ class JarvisService : AccessibilityService() {
                 t("ما قدرت أرسلها: ${e.message}", "Could not send it: ${e.message}")
             }
         })
+    }
+
+    // ------------------------------------------------------------------ habits
+
+    private var fromHabit = false
+    private fun localMinute() = (System.currentTimeMillis() + java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis())) / 60_000
+
+    private fun noteHabit(text: String) {
+        val list = Habits.add(Habits.decode(prefs.getString("habits", "").orEmpty()), Habits.Entry(text.trim(), localMinute()))
+        prefs.edit().putString("habits", Habits.encode(list)).apply()
+    }
+
+    private fun counts(key: String): MutableMap<String, Long> = prefs.getString(key, "").orEmpty().lines()
+        .mapNotNull { l -> l.substringAfterLast('|').toLongOrNull()?.let { l.substringBeforeLast('|') to it } }.toMap().toMutableMap()
+
+    private fun saveCounts(key: String, m: Map<String, Long>) =
+        prefs.edit().putString(key, m.entries.joinToString("\n") { "${it.key}|${it.value}" }).apply()
+
+    /** Every five minutes: is it the time of something the person does every day? Offer it once. */
+    private val habitTick = object : Runnable {
+        override fun run() {
+            main.postDelayed(this, 5 * 60_000L)
+            if (!prefs.getBoolean("pro_on", true) || !prefs.getBoolean("habits_on", true)) return
+            if (tts?.isSpeaking == true || game != null || beads != null || translating || learning != null || sleepEnd != 0L) return
+            if (pending != null && SystemClock.elapsedRealtime() < pendingUntil) return
+            val now = localMinute()
+            val offered = counts("habits_offered")
+            val refused = counts("habits_refused").mapValues { it.value.toInt() }
+            val h = Habits.due(Habits.decode(prefs.getString("habits", "").orEmpty()), now, offered, refused) ?: return
+            val key = Commands.normalize(h.text).trim()
+            offered[key] = now / (24 * 60)
+            saveCounts("habits_offered", offered)
+            respond(ask(t("عادةً في الوقت ده بتقول «${h.text}». أعملها؟ نعم أو لا.", "Around now you usually say \"${h.text}\". Do it?"),
+                onNo = {
+                    val r = counts("habits_refused"); r[key] = (r[key] ?: 0) + 1; saveCounts("habits_refused", r)
+                    t("تمام.", "OK.")
+                }) {
+                fromHabit = true
+                try { handleText(h.text) } finally { fromHabit = false }
+                ""
+            })
+        }
+    }
+
+    // ------------------------------------------------------------------ teaching Zol by showing it
+
+    private var learning: MutableList<Macros.Step>? = null
+    private var learningName = ""
+    private var lastClickAt = 0L
+    private val learnTimeout = Runnable { if (learning != null) respond(finishLearning("")) }
+
+    fun macros(): LinkedHashMap<String, List<Macros.Step>> = Macros.decode(prefs.getString("macros", "").orEmpty())
+
+    private fun saveMacros(m: Map<String, List<Macros.Step>>) {
+        prefs.edit().putString("macros", Macros.encode(m)).apply()
+        Commands.macroNames = m.keys
+    }
+
+    private fun startLearning(name: String): String {
+        learning = ArrayList()
+        learningName = name
+        // already inside an app: the routine starts by opening it
+        rootInActiveWindow?.packageName?.toString()?.let { pkg ->
+            if (pkg != packageName && pkg != homePackage() && packageManager.getLaunchIntentForPackage(pkg) != null)
+                learning?.add(Macros.Step("open", pkg))
+        }
+        main.removeCallbacks(learnTimeout)
+        main.postDelayed(learnTimeout, 10 * 60_000L)
+        return t("عاين ليك. اعمل الحاجة قدامي: اضغط وأكتب، أو قول الأوامر. ولمن تخلص قول: زول سمّيها" +
+            (if (name.isEmpty()) " وبعدها الاسم." else "، أو زول خلصت."),
+            "Watching. Do it once (tap, type, or say commands); then say: name it, and the name.")
+    }
+
+    private fun finishLearning(name: String): String {
+        val steps = learning ?: return t("ما كنت بتعلم حاجة. قول «زول اتعلم» عشان أبدأ.", "I was not learning. Say: learn this.")
+        main.removeCallbacks(learnTimeout)
+        val n = name.ifBlank { learningName }.trim()
+        if (n.isEmpty()) {                               // no name yet: the next sentence is the name
+            awakeUntil = SystemClock.elapsedRealtime() + 15_000
+            return ask(t("سمّيها شنو؟ قول: زول سمّيها، وبعدها الاسم.", "What should I call it?"), onNo = { learning = null; t("ألغيت.", "Cancelled.") }) {
+                t("قول: زول سمّيها، وبعدها الاسم.", "Say: name it, and the name.")
+            }
+        }
+        learning = null
+        if (steps.isEmpty()) return t("ما شفتك عملت حاجة، فما حفظت.", "I saw nothing, so nothing was kept.")
+        val all = macros()
+        all[n] = steps
+        saveMacros(all)
+        return t("اتعلمت «$n»: ", "Learned \"$n\": ") + Macros.describe(steps) { appName(it) } +
+            t(". قول «زول $n» عشان أعملها.", ". Say it to run it.")
+    }
+
+    private fun appName(pkg: String): String = try {
+        packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+    } catch (_: Exception) { pkg }
+
+    /** While learning: what the person taps, types, and which app comes up. */
+    private fun watch(event: AccessibilityEvent) {
+        val steps = learning ?: return
+        val pkg = event.packageName?.toString().orEmpty()
+        if (pkg.isEmpty() || pkg == packageName || pkg == "com.android.systemui") return
+        when (event.eventType) {
+            AccessibilityEvent.TYPE_VIEW_CLICKED -> {
+                val node = event.source ?: return
+                val r = Rect().also { node.getBoundsInScreen(it) }
+                var text = node.text?.toString().orEmpty()
+                if (text.isEmpty()) for (i in 0 until node.childCount) {
+                    val c = node.getChild(i)?.text?.toString().orEmpty()
+                    if (c.isNotEmpty()) { text = c; break }
+                }
+                Macros.add(steps, Macros.Step("click", pkg, text.take(80), node.contentDescription?.toString().orEmpty().take(80),
+                    node.viewIdResourceName.orEmpty(), r.centerX(), r.centerY()))
+                lastClickAt = SystemClock.elapsedRealtime()
+            }
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
+                val node = event.source
+                if (node?.isPassword == true) return                 // passwords are never kept
+                val text = event.text?.joinToString(" ")?.trim().orEmpty()
+                if (text.isNotEmpty()) Macros.add(steps, Macros.Step("type", pkg, text.take(500), id = node?.viewIdResourceName.orEmpty()))
+            }
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                // an app that came up from the home screen (not because of a tap inside the last app)
+                val launcher = homePackage()
+                if (pkg == launcher) return
+                val last = steps.lastOrNull()
+                if (last?.kind == "click" && last.pkg != launcher && SystemClock.elapsedRealtime() - lastClickAt < 2_000) return
+                if (packageManager.getLaunchIntentForPackage(pkg) == null) return
+                if (last?.kind == "click" && last.pkg == launcher) steps.removeAt(steps.size - 1)   // the icon tap is the opening
+                Macros.add(steps, Macros.Step("open", pkg))
+            }
+        }
+    }
+
+    private fun homePackage(): String? = packageManager.resolveActivity(
+        Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0)?.activityInfo?.packageName
+
+    /** Do a taught routine again, step by step, waiting for each screen. */
+    private fun runMacro(name: String): String {
+        val steps = macros()[name] ?: return t("ما لقيت «$name».", "No routine called $name.")
+        if (steps.isEmpty()) return t("«$name» فاضية.", "Empty.")
+        runStep(name, steps, 0, 0)
+        return t("بعمل «$name».", "Doing $name.")
+    }
+
+    private fun runStep(name: String, steps: List<Macros.Step>, i: Int, tries: Int) {
+        if (i >= steps.size) { respond(t("خلصت «$name».", "Done.")); return }
+        val s = steps[i]
+        val next = { main.postDelayed({ runStep(name, steps, i + 1, 0) }, if (s.kind == "open") 2_500L else 1_200L) }
+        when (s.kind) {
+            "open" -> {
+                val launch = packageManager.getLaunchIntentForPackage(s.pkg)
+                if (launch == null) { respond(t("التطبيق ${s.pkg} ما موجود.", "App not installed.")); return }
+                startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                next()
+            }
+            "say" -> { handleText(s.text); main.postDelayed({ runStep(name, steps, i + 1, 0) }, 2_500) }
+            "type" -> {
+                val field = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                    ?: screenNodes().firstOrNull { it.isEditable && it.isVisibleToUser && (s.id.isEmpty() || it.viewIdResourceName == s.id) }
+                    ?: screenNodes().firstOrNull { it.isEditable && it.isVisibleToUser }
+                if (field == null) {
+                    if (tries < 5) { main.postDelayed({ runStep(name, steps, i, tries + 1) }, 700); return }
+                    respond(t("وقفت: ما لقيت مكان الكتابة.", "Stopped: no text field.")); return
+                }
+                val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, s.text) }
+                field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                next()
+            }
+            else -> {
+                val best = screenNodes().filter { it.isVisibleToUser }
+                    .map { it to Macros.score(s, it.viewIdResourceName, it.text?.toString(), it.contentDescription?.toString()) }
+                    .maxByOrNull { it.second }
+                if (best != null && best.second >= Macros.ENOUGH) { press(best.first); next(); return }
+                if (tries < 6) { main.postDelayed({ runStep(name, steps, i, tries + 1) }, 700); return }
+                if (s.x >= 0 && s.text.isEmpty() && s.desc.isEmpty()) {     // a button with no words: where it was
+                    gesture(Path().apply { moveTo(s.x.toFloat(), s.y.toFloat()); lineTo(s.x.toFloat(), s.y.toFloat()) }, 60)
+                    next(); return
+                }
+                respond(t("وقفت في الخطوة ${i + 1}: ما لقيت «${s.text.ifEmpty { s.desc }}».", "Stopped at step ${i + 1}."))
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ the phone as the computer's mouse
+
+    private var pc: PcLink? = null
+
+    private fun pcCommand(c: Cmd.Pc): String {
+        val link = pc
+        return when (c.what) {
+            "on" -> startPc()
+            "off" -> { head?.remote = null; link?.stop(); pc = null; t("فصلت الكمبيوتر.", "Disconnected.") }
+            else -> {
+                if (link?.connected != true) return t("الكمبيوتر ما متوصل. قول «زول وصّل الكمبيوتر».", "No computer connected.")
+                when (c.what) {
+                    "type" -> link.type(c.text)
+                    "click" -> link.click(1)
+                    "right" -> link.click(2)
+                    "enter" -> link.key(0, Hid.ENTER)
+                    "back" -> link.key(0, Hid.BACKSPACE)
+                    "esc" -> link.key(0, Hid.ESCAPE)
+                }
+                t("حاضر.", "Done.")
+            }
+        }
+    }
+
+    fun startPc(): String {
+        if (Build.VERSION.SDK_INT < 28) return t("الميزة دي محتاجة أندرويد 9 أو أحدث.", "Needs Android 9 or newer.")
+        if (Build.VERSION.SDK_INT >= 31 && !granted(Manifest.permission.BLUETOOTH_CONNECT))
+            return t("محتاج إذن البلوتوث: افتح ✨ الميزات ← الكمبيوتر بالراس.", "Bluetooth permission needed: Features → computer.")
+        val link = pc ?: PcLink(this) { st -> main.post { pcStatus(st) } }.also { pc = it }
+        if (!link.start()) { pc = null; return t("تلفونك ما بيقدر يبقى ماوس بلوتوث.", "This phone cannot be a Bluetooth mouse.") }
+        return t("بجهّز الماوس والكيبورد…", "Getting the mouse ready…")
+    }
+
+    private fun pcStatus(st: String) {
+        when {
+            st == "ready" -> if (pc?.connected != true) {
+                try {
+                    startActivity(Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE)
+                        .putExtra(android.bluetooth.BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 180).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } catch (_: Exception) {}
+                respond(t("من الكمبيوتر: الإعدادات ← Bluetooth ← أضف جهاز، واختار تلفونك. المرة الجاية بيتوصل براهو.",
+                    "On the computer: Settings → Bluetooth → Add device, and choose this phone."))
+            }
+            st.startsWith("connected:") -> {
+                if (head?.running != true) startHead()
+                attachPcHead()
+                respond(t("اتوصلت بـ${st.substringAfter(':')}. لف راسك عشان الماوس يمشي، وارجع راسك للنص عشان يقيف، " +
+                    "واسكت عليهو شوية عشان يضغط. وقول «زول اكتب في الكمبيوتر …» عشان تكتب.",
+                    "Connected. Turn your head to move the mouse; hold still to click."))
+            }
+            st == "disconnected" -> { head?.remote = null; log("الكمبيوتر اتفصل.") }
+            st == "unsupported" -> { pc?.stop(); pc = null; respond(t("الشركة المصنعة قافلة الميزة دي في تلفونك (ماوس البلوتوث).",
+                "The maker turned this off on this phone.")) }
+            st == "bluetooth_off" -> {
+                try { startActivity(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) {}
+                pc = null
+                respond(t("شغّل البلوتوث وقول تاني «زول وصّل الكمبيوتر».", "Turn Bluetooth on, then try again."))
+            }
+        }
+    }
+
+    /** The head moves the computer's mouse like a joystick, and holding still clicks. */
+    private fun attachPcHead() {
+        val dm = resources.displayMetrics
+        head?.remote = remote@{ f ->
+            val link = pc
+            if (link?.connected != true) return@remote false
+            if (!f.face) return@remote true
+            val vx = (f.x - dm.widthPixels / 2f) / (dm.widthPixels / 2f)
+            val vy = (f.y - dm.heightPixels / 2f) / (dm.heightPixels / 2f)
+            link.move(Hid.speed(vx), Hid.speed(vy))
+            if (f.tap) { link.click(1); beep(2) }
+            true
+        }
+    }
+
+    // ------------------------------------------------------------------ control with the eyes
+
+    private var eyeGestures: EyeGestures? = null
+    private var eyesStartedSwitches = false
+
+    /**
+     * For someone who can move neither hands nor head: the switch scanning goes over the screen, and the eyes
+     * are the two switches: a wink of the right eye moves on, a wink of the left eye chooses, closing both eyes
+     * for a moment goes back.
+     */
+    private fun startEyes(): String {
+        if (!granted(Manifest.permission.CAMERA)) return t("محتاج إذن الكاميرا. افتح زول ← الإعدادات ← التحكم بالرأس.", "Camera permission needed.")
+        if (switches?.running != true) {
+            val control = switches ?: SwitchControl(this, { switchItems() }, { switchStrip(it) }).also { switches = it }
+            control.start(0L)
+            eyesStartedSwitches = true
+        }
+        if (head?.running != true) startHead()
+        val g = EyeGestures().also { eyeGestures = it }
+        head?.hideCursor = true
+        head?.remote = { true }                          // the head does not move a pointer here
+        head?.eyes = { l, r ->
+            when (g.feed(l, r, SystemClock.elapsedRealtime())) {
+                EyeGestures.Event.WINK_RIGHT -> switches?.step()
+                EyeGestures.Event.WINK_LEFT -> { switches?.select(); beep(2) }
+                EyeGestures.Event.LONG_CLOSE -> { performGlobalAction(GLOBAL_ACTION_BACK); beep(1) }
+                null -> {}
+            }
+        }
+        return t("التحكم بالعيون شغّال. غمّز بعينك اليمين عشان تمشي للجاي، وبعينك الشمال عشان تختار، وغمّض عيونك التنين شوية عشان ترجع. " +
+            "لو الاتجاهات طلعت بالعكس، بس اتعوّد عليها كدا.",
+            "Eye control on: right wink moves on, left wink chooses, both eyes closed goes back.")
+    }
+
+    private fun stopEyes(): String {
+        eyeGestures = null
+        head?.eyes = null
+        head?.remote = null
+        head?.hideCursor = false
+        if (eyesStartedSwitches) { eyesStartedSwitches = false; if (prefs.getString("switch_mode", "off") == "off") { switches?.stop(); switches = null } }
+        stopHead()
+        return t("وقفت التحكم بالعيون.", "Eye control off.")
+    }
+
+    // ------------------------------------------------------------------ the English teacher
+
+    private class LessonState(var lesson: Int, var phrase: Int) { var tries = 0; var good = 0 }
+    private var lesson: LessonState? = null
+    private val lessonTimeout = Runnable { if (lesson != null) { lesson = null; respond(t("وقفت الدرس عشان ما رديت. نكمّل بعدين.", "Lesson paused.")) } }
+
+    private fun startEnglish(): String {
+        if (groqKey().isEmpty() || !cloudStt()) return t("الدرس محتاج زول يسمع إنجليزي عن طريق Groq: شغّل «اسمع عن طريق Groq Whisper» من الإعدادات.",
+            "The lesson needs Groq listening.")
+        val l = prefs.getInt("eng_lesson", 0).coerceIn(0, Teacher.LESSONS.size - 1)
+        lesson = LessonState(l, prefs.getInt("eng_phrase", 0).coerceIn(0, Teacher.LESSONS[l].phrases.size - 1))
+        if (!listening) startListening(false)
+        say(t("يلا نتعلم إنجليزي. درس ${Teacher.LESSONS[l].title}. بقول ليك الجملة، وإنت قولها بعدي. قول stop عشان نقيف، و next عشان الجاية.",
+            "English lesson. Repeat after me; say stop or next."))
+        main.postDelayed({ sayPhrase() }, 7_000)
+        return ""
+    }
+
+    private fun sayPhrase() {
+        val s = lesson ?: return
+        val p = Teacher.LESSONS[s.lesson].phrases[s.phrase]
+        main.removeCallbacks(lessonTimeout)
+        main.postDelayed(lessonTimeout, 120_000)
+        say(p.arabic)
+        say(p.english, add = true)
+    }
+
+    private fun englishHeard(heard: String) {
+        val s = lesson ?: return
+        val p = Teacher.LESSONS[s.lesson].phrases[s.phrase]
+        log("سمعت: $heard")
+        if (Fun.stops(heard) || Teacher.control(heard) == "stop") {
+            lesson = null
+            main.removeCallbacks(lessonTimeout)
+            respond(t("كويس، وقفنا. نكمّل من نفس المكان المرة الجاية.", "Stopped; we carry on next time."))
+            return
+        }
+        when (Teacher.control(heard)) {
+            "again" -> { sayPhrase(); return }
+            "next" -> { nextPhrase(false); return }
+        }
+        val g = Teacher.grade(p.english, heard)
+        when {
+            g.score >= 0.85 -> { s.good++; respond(t("ممتاز! ", "Excellent! ")); main.postDelayed({ nextPhrase(true) }, 1_500) }
+            g.score >= 0.5 && s.tries == 0 -> {
+                s.tries++
+                say(t("قريبة! الكلمة الناقصة: ", "Close! Missing: "))
+                say(g.missing.joinToString(" "), add = true)
+                say(t("قولها تاني:", "Again:"), add = true)
+                say(p.english, add = true)
+            }
+            s.tries == 0 -> { s.tries++; say(t("جرّب تاني، اسمعها:", "Try again, listen:")); say(p.english, add = true) }
+            else -> { respond(t("ما مشكلة، نمشي للجاية.", "No problem, the next one.")); main.postDelayed({ nextPhrase(false) }, 1_500) }
+        }
+    }
+
+    private fun nextPhrase(wasGood: Boolean) {
+        val s = lesson ?: return
+        s.tries = 0
+        s.phrase++
+        if (s.phrase >= Teacher.LESSONS[s.lesson].phrases.size) {
+            val done = Teacher.LESSONS[s.lesson].title
+            val good = s.good
+            s.lesson = (s.lesson + 1) % Teacher.LESSONS.size
+            s.phrase = 0
+            s.good = 0
+            prefs.edit().putInt("eng_lesson", s.lesson).putInt("eng_phrase", 0).apply()
+            lesson = null
+            respond(t("خلصنا درس $done! قلت $good جملة صاح. الدرس الجاي: ${Teacher.LESSONS[s.lesson].title}. قول «زول علمني انجليزي» لمن تكون جاهز.",
+                "Lesson done! Next: ${Teacher.LESSONS[s.lesson].title}."))
+            return
+        }
+        prefs.edit().putInt("eng_lesson", s.lesson).putInt("eng_phrase", s.phrase).apply()
+        sayPhrase()
+    }
+
+    // ------------------------------------------------------------------ dialect packs
+
+    private fun myPack(): String? {
+        val words = Commands.parseDict(prefs.getString("dialect", "").orEmpty())
+        val phrases = Commands.parsePhrases(prefs.getString("phrases", "").orEmpty())
+        if (words.isEmpty() && phrases.isEmpty()) return null
+        return Dialects.format(prefs.getString("dialect_name", null) ?: "لهجتي", words, phrases)
+    }
+
+    /** What the person taught Zol, as text to send: to someone (WhatsApp...), or to the community list. */
+    private fun shareDialect(community: Boolean): String {
+        val pack = myPack() ?: return t("لسه ما درّبتني على كلامك. قول «زول دربني» أو «زول علمني».", "Nothing taught yet.")
+        return try {
+            if (community) {
+                val body = "دي حزمة لهجة من زول. ممكن تضيفوها للهجات المجتمع؟\n\n```\n${pack.take(6000)}\n```"
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Dialects.CONTRIBUTE + "?title=" + Uri.encode("لهجة جديدة") +
+                    "&body=" + Uri.encode(body))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                t("فتحت صفحة المجتمع في GitHub والحزمة مكتوبة فيها. اضغط Submit عشان ترسلها.", "Opened GitHub with your pack; press Submit.")
+            } else {
+                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, pack),
+                    "شارك لهجتك").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                t("اختار وين ترسلها. البيستلمها يشاركها مع زول بتاعو عشان تتضاف.", "Choose where to send it.")
+            }
+        } catch (e: Exception) { t("ما قدرت: ${e.message}", "Could not share.") }
+    }
+
+    /** A pack someone sent (shared to Zol), or a community one: added to what Zol knows, the person's own words kept. */
+    fun importPack(text: String): String {
+        val pack = Dialects.parse(text) ?: return t("دي ما حزمة لهجة من زول.", "That is not a Zol dialect pack.")
+        val (words, nw) = Dialects.merge(prefs.getString("dialect", "").orEmpty(), pack.words) { Commands.normalize(it).replace(" ", "") }
+        val (phrases, np) = Dialects.merge(prefs.getString("phrases", "").orEmpty(), pack.phrases) { Commands.normalize(it).trim() }
+        prefs.edit().putString("dialect", words).putString("phrases", phrases).apply()
+        Commands.userDict = Commands.parseDict(words)
+        Commands.userPhrases = Commands.parsePhrases(phrases)
+        return if (nw + np == 0) t("«${pack.name}»: كل الفيها عارفو من قبل.", "Nothing new in ${pack.name}.")
+        else t("ضفت «${pack.name}»: $nw كلمة و$np جملة.", "Added ${pack.name}: $nw words, $np sentences.")
+    }
+
+    /** The community list: read out ([want] null), or the pack [want] downloaded and added. */
+    fun communityDialects(want: String?, done: ((List<Dialects.Entry>) -> Unit)? = null) {
+        Thread {
+            val list = try { Dialects.parseIndex(fetchText(Dialects.BASE + "index.txt")) } catch (_: Exception) { null }
+            main.post {
+                if (list == null) { respond(t("ما قدرت أوصل للهجات المجتمع. اتأكد من النت.", "Could not reach the community list.")); return@post }
+                if (done != null) { done(list); return@post }
+                if (want == null) {
+                    respond(if (list.isEmpty()) t("لسه ما في لهجات. كن أول زول: قول «زول رسّل لهجتي للمجتمع».", "None yet.")
+                        else t("لهجات المجتمع: ", "Community dialects: ") + list.joinToString("، ") { it.name } +
+                            t(". قول «زول نزّل لهجة» والاسم.", ". Say: install dialect, and the name."))
+                    return@post
+                }
+                val e = Dialects.find(list, want) ?: run { respond(t("ما لقيت لهجة «$want».", "No dialect called $want.")); return@post }
+                installCommunity(e)
+            }
+        }.start()
+    }
+
+    fun installCommunity(e: Dialects.Entry) {
+        Thread {
+            val text = try { fetchText(Dialects.BASE + e.id + ".txt") } catch (_: Exception) { null }
+            main.post { respond(if (text == null) t("ما قدرت أنزّل «${e.name}».", "Could not download ${e.name}.") else importPack(text)) }
+        }.start()
+    }
+
+    private fun fetchText(address: String): String {
+        val con = URL(address).openConnection() as HttpURLConnection
+        con.connectTimeout = 10_000
+        con.readTimeout = 15_000
+        if (con.responseCode !in 200..299) { con.disconnect(); throw java.io.IOException("${con.responseCode}") }
+        return con.inputStream.bufferedReader().use { it.readText() }.also { con.disconnect() }
+    }
+
+    // ------------------------------------------------------------------ live captions
+
+    /** The sentences written so far (the screen shows them again when it is opened). */
+    val captions = ArrayList<String>()
+    private val captionListeners = java.util.concurrent.CopyOnWriteArrayList<(String) -> Unit>()
+    private var captionsStartedListening = false
+
+    /** The captions screen is open: every sentence heard goes there, and nothing is done with it. */
+    fun startCaptions(l: (String) -> Unit) {
+        captionListeners.add(l)
+        if (!listening && granted(Manifest.permission.RECORD_AUDIO)) { captionsStartedListening = true; startListening(false) }
+    }
+
+    fun stopCaptions(l: (String) -> Unit) {
+        captionListeners.remove(l)
+        if (captionListeners.isEmpty() && captionsStartedListening) { captionsStartedListening = false; stopListening(false) }
+    }
+
+    private fun caption(text: String) {
+        val line = text.trim()
+        if (line.isEmpty()) return
+        captions.add(line)
+        while (captions.size > 100) captions.removeAt(0)
+        captionListeners.forEach { it(line) }
     }
 
     // ------------------------------------------------------------------ the prayer beads
@@ -2728,10 +3226,12 @@ class JarvisService : AccessibilityService() {
             val heard = list.firstOrNull().orEmpty()
             val now = SystemClock.elapsedRealtime()
             // Zol's own voice coming back from the speaker is not a command
-            if (heard.isNotBlank() && ownVoice.isEcho(heard, now) && list.none { Commands.isEmergency(it) }) { resume(200); return }
+            // (in an English lesson the person repeats Zol's sentence on purpose)
+            if (heard.isNotBlank() && lesson == null && ownVoice.isEcho(heard, now) && list.none { Commands.isEmergency(it) }) { resume(200); return }
             // a song or video playing on the phone says "زول" too: then the sentence must start with it
             val inMode = wellbeing != null || findPlayer != null || game != null || translating || beads != null ||
-                trainQueue != null || dictating || (pending != null && now < pendingUntil) || now < awakeUntil
+                trainQueue != null || dictating || (pending != null && now < pendingUntil) || now < awakeUntil || captionListeners.isNotEmpty() ||
+                lesson != null
             if (!inMode && heard.isNotBlank() && othersPlaying() && list.none { Commands.isEmergency(it) } &&
                 list.none { Commands.wakeAtStart(it) }) { resume(200); return }
             if (wellbeing != null && heard.isNotBlank()) {               // the answer to "are you alright?"
@@ -2750,6 +3250,8 @@ class JarvisService : AccessibilityService() {
                 if (game != null) { log("سمعت: $heard"); gameHeard(Commands.stripWake(heard) ?: heard); return }
                 if (translating) { translateHeard(Commands.stripWake(heard) ?: heard); return }
                 if (beads != null) { tasbeehHeard(Commands.stripWake(heard) ?: heard); return }
+                if (captionListeners.isNotEmpty()) { caption(heard); resume(200); return }
+                if (lesson != null) { englishHeard(heard); return }
             }
             if (trainQueue != null && heard.isNotBlank() && list.none { Commands.isEmergency(it) }) {
                 log("سمعت: $heard")
@@ -2790,6 +3292,7 @@ class JarvisService : AccessibilityService() {
         Commands.userDict = Commands.parseDict(prefs.getString("dialect", "").orEmpty())
         Commands.userPhrases = Commands.parsePhrases(prefs.getString("phrases", "").orEmpty())
         Commands.homeDevices = devices().keys
+        Commands.macroNames = macros().keys
         Commands.setWake(prefs.getString("wake_word", "زول"))
         usePrayerPlace()
         if (text.isNotBlank()) prefs.edit().putBoolean("tested", true).apply()
@@ -2826,6 +3329,10 @@ class JarvisService : AccessibilityService() {
                 return
             }
             val commands = Commands.parseAll(text)
+            if (commands.size == 1 && Habits.worth(commands[0]) && !fromHabit) noteHabit(text)
+            // while learning, spoken commands are steps too
+            if (learning != null && commands.isNotEmpty() && commands.none { it is Cmd.Learn || it is Cmd.LearnDone || it is Cmd.ListMacros })
+                Macros.add(learning!!, Macros.Step("say", text = text))
             when {
                 findScene(text, exact = true) != null -> { beep(2); respond(runScene(text)) }
                 commands.isNotEmpty() -> runAll(commands, 0)
@@ -3978,7 +4485,7 @@ class JarvisService : AccessibilityService() {
                 }
                 if (action != -1 && performGlobalAction(action)) ok else t("لم أستطع.", "I could not do that.")
             }
-            is Cmd.Scroll -> { swipe(c.down); ok }
+            is Cmd.Scroll -> { if (pc?.connected == true) pc?.scroll(if (c.down) -4 else 4) else swipe(c.down); ok }
             is Cmd.Numbers -> if (c.show) showNumbers() else { hideNumbers(); ok }
             is Cmd.Tap -> when {
                 number != null && gridView != null -> gridPick(number)
@@ -4014,6 +4521,29 @@ class JarvisService : AccessibilityService() {
             is Cmd.Dim -> dimScreen(c.on)
             is Cmd.Rotate -> autoRotate(c.on)
             is Cmd.KeepScreen -> keepScreenOn(c.on)
+            is Cmd.OfflinePack -> { downloadWhisper(c.model); "" }
+            is Cmd.Learn -> startLearning(c.name)
+            is Cmd.LearnDone -> finishLearning(c.name)
+            is Cmd.RunMacro -> runMacro(c.name)
+            Cmd.ListMacros -> macros().let { m ->
+                if (m.isEmpty()) t("لسه ما علمتني حاجة. قول «زول اتعلم» واعملها قدامي مرة.", "Nothing taught yet. Say: learn this.")
+                else t("الحاجات الاتعلمتها: ", "Routines: ") + m.keys.joinToString("، ") + "."
+            }
+            is Cmd.ForgetMacro -> { val m = macros(); m.remove(c.name); saveMacros(m); t("نسيت «${c.name}».", "Forgot ${c.name}.") }
+            is Cmd.ShareDialect -> shareDialect(c.community)
+            Cmd.CommunityDialects -> { communityDialects(null); t("بشوف لهجات المجتمع…", "Checking…") }
+            is Cmd.InstallDialect -> { communityDialects(c.name); "" }
+            Cmd.English -> startEnglish()
+            is Cmd.Pc -> pcCommand(c)
+            is Cmd.Eyes -> if (c.on) startEyes() else stopEyes()
+            Cmd.VoiceBank -> {
+                startActivity(Intent(this, VoiceBankActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                t("سجّل الجمل البتقولها كتير بصوتك.", "Record your own sentences.")
+            }
+            Cmd.Captions -> {
+                startActivity(Intent(this, CaptionsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                t("بكتب ليك أي كلام بسمعو.", "Writing down everything I hear.")
+            }
             is Cmd.Calc -> Fun.calc(c.text)?.let { t("بيساوي ${Fun.number(it)}.", "That is ${Fun.number(it)}.") }
                 ?: t("ما فهمت الحساب.", "I did not get the sum.")
             is Cmd.Photo -> takePhoto(c.seconds)
@@ -4025,7 +4555,7 @@ class JarvisService : AccessibilityService() {
             Cmd.ReadLong -> readLong()
             is Cmd.HomeStatus -> homeStatus(c.device)
             Cmd.Caregiver -> notifyCaregiver()
-            is Cmd.Type -> type(c.text)
+            is Cmd.Type -> if (pc?.connected == true) { pc?.type(c.text); t("كتبتها في الكمبيوتر.", "Typed on the computer.") } else type(c.text)
             is Cmd.OpenApp -> openApp(c.name)
             is Cmd.Call -> call(c.target)
             is Cmd.Message -> message(c.name, c.body)

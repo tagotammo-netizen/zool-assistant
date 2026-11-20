@@ -25,6 +25,11 @@
         tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
+    <!-- the phone as a Bluetooth mouse and keyboard for a computer or a TV -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <!-- brightness and rotation by voice (the person allows it once in settings) -->
     <uses-permission android:name="android.permission.WRITE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
@@ -66,6 +71,12 @@
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- a dialect pack sent by someone (WhatsApp → share → Zol) -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
         </activity>
 
         <provider
@@ -82,6 +93,14 @@
             android:name=".FeaturesActivity"
             android:exported="false"
             android:label="ميزات زول" />
+        <activity
+            android:name=".VoiceBankActivity"
+            android:exported="false"
+            android:label="بنك صوتك" />
+        <activity
+            android:name=".CaptionsActivity"
+            android:exported="false"
+            android:label="الكلام مكتوب" />
 
         <service
             android:name=".JarvisService"

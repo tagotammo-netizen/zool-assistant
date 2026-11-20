@@ -131,3 +131,47 @@ class OwnVoice(private val keepMs: Long = 25_000) {
 
     private fun words(t: String) = Commands.normalize(t).split(" ").filter { it.length >= 2 }
 }
+
+/**
+ * Eye gestures from the front camera, for someone who can move neither hands nor head: a wink of one eye
+ * (a quarter to one and a half seconds, the other eye open) and closing both eyes for a second and a half.
+ * An ordinary blink (both eyes, short) does nothing. [left]/[right] are the chance each eye is open (ML Kit).
+ */
+class EyeGestures(private val closed: Float = 0.3f, private val open: Float = 0.6f) {
+    enum class Event { WINK_LEFT, WINK_RIGHT, LONG_CLOSE }
+
+    private var leftSince = -1L
+    private var rightSince = -1L
+    private var bothSince = -1L
+    private var spoilt = false        // the other eye closed during a wink: it was a blink
+    private var longFired = false
+
+    fun feed(left: Float?, right: Float?, t: Long): Event? {
+        if (left == null || right == null) { reset(); return null }
+        val lc = left < closed
+        val rc = right < closed
+        if (lc && rc) {
+            if (bothSince < 0) bothSince = t
+            spoilt = true
+            if (!longFired && t - bothSince >= 1_500) { longFired = true; return Event.LONG_CLOSE }
+            return null
+        }
+        bothSince = -1L
+        if (!lc && !rc) longFired = false
+        var event: Event? = null
+        if (lc) { if (leftSince < 0) leftSince = t }
+        else if (leftSince >= 0) {
+            if (left > open && !spoilt && t - leftSince in 250..1_500) event = Event.WINK_LEFT
+            leftSince = -1L
+        }
+        if (rc) { if (rightSince < 0) rightSince = t }
+        else if (rightSince >= 0) {
+            if (right > open && !spoilt && t - rightSince in 250..1_500) event = Event.WINK_RIGHT
+            rightSince = -1L
+        }
+        if (!lc && !rc) spoilt = false
+        return event
+    }
+
+    fun reset() { leftSince = -1L; rightSince = -1L; bothSince = -1L; spoilt = false; longFired = false }
+}

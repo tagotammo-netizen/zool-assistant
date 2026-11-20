@@ -187,6 +187,7 @@ class HeadControl(
         det.process(image)
             .addOnSuccessListener { faces ->
                 val face = faces.maxByOrNull { it.boundingBox.width() }
+                eyes?.let { e -> main.post { e(face?.leftEyeOpenProbability, face?.rightEyeOpenProbability) } }
                 val frame = tracker?.update(face?.headEulerAngleY, face?.headEulerAngleX,
                     face?.leftEyeOpenProbability, face?.rightEyeOpenProbability, SystemClock.elapsedRealtime(),
                     face?.smilingProbability)
@@ -196,9 +197,18 @@ class HeadControl(
             .addOnCompleteListener { proxy.close() }
     }
 
+    /** Another screen to drive (a computer over Bluetooth): each frame goes there first; true when it took it. */
+    @Volatile var remote: ((HeadTracker.Frame) -> Boolean)? = null
+    /** Every frame's eyes (chance each is open), for eye gestures. */
+    @Volatile var eyes: ((Float?, Float?) -> Unit)? = null
+    /** Eyes only: the pointer is not shown. */
+    @Volatile var hideCursor = false
+
     private fun show(frame: HeadTracker.Frame) {
         if (!running) return
         val view = cursor
+        view?.visibility = if (hideCursor) android.view.View.GONE else android.view.View.VISIBLE
+        remote?.let { if (it(frame)) { if (!hideCursor) view?.update(frame.x, frame.y, frame.progress, frame.face, null); return } }
         if (keyboardShown && view != null && typeOnKeyboard(view, frame)) return
         val action = view?.actionAt(frame.x, frame.y)
         if (action == null) { lastX = frame.x; lastY = frame.y }

@@ -187,6 +187,7 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<View>(R.id.btnFeatures).setOnClickListener { startActivity(Intent(this, FeaturesActivity::class.java)) }
         when {
+            importShared(intent) -> {}
             intent?.getStringExtra(EXTRA_OPEN) != null -> drawer.post { openFromFeatures(intent) }
             !prefs.getBoolean("wizard_done", false) && nextStep() != null -> drawer.post { showWizard() }
             else -> askPermissions()
@@ -195,7 +196,18 @@ class MainActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        openFromFeatures(intent)
+        if (!importShared(intent)) openFromFeatures(intent)
+    }
+
+    /** Text shared to Zol: a dialect pack is added; anything else is said to Zol like a typed command. */
+    private fun importShared(intent: Intent?): Boolean {
+        if (intent?.action != Intent.ACTION_SEND) return false
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
+        intent.action = null
+        if (!Dialects.isPack(text)) return false
+        val s = JarvisService.instance
+        toast(s?.importPack(text) ?: "شغّل خدمة زول أولاً، وبعدها شارك الحزمة تاني.")
+        return true
     }
 
     /** The features screen asked for something that lives here. */
