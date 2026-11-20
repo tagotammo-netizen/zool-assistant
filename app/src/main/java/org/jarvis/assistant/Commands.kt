@@ -52,6 +52,14 @@ sealed class Cmd {
     data class TranslateMode(val on: Boolean) : Cmd()        // every sentence heard is translated and said
     object VoiceNote : Cmd()                                 // the last WhatsApp voice message, written out and read
     data class VoiceMessage(val name: String) : Cmd()        // record a voice message and send it on WhatsApp
+    data class Tasbeeh(val on: Boolean) : Cmd()              // the prayer beads: count what is said
+    data class Sleep(val minutes: Int) : Cmd()               // Quran to fall asleep to, fading out; 0: stop it
+    data class Daily(val kind: String) : Cmd()               // dua, hadith
+    data class Brightness(val how: String) : Cmd()           // up, down, max, min, auto
+    data class Dim(val on: Boolean) : Cmd()                  // a dark filter over the screen
+    data class Rotate(val on: Boolean) : Cmd()               // auto-rotate
+    data class KeepScreen(val on: Boolean) : Cmd()           // the screen stays on
+    data class Calc(val text: String) : Cmd()
     data class Photo(val seconds: Int) : Cmd()
     data class OpenChat(val name: String) : Cmd()
     data class Dictation(val start: Boolean) : Cmd()
@@ -336,6 +344,23 @@ object Commands {
         listOf("اضغط هنا", "دوس هنا", "اكبس هنا", "tap here", "click here") to Cmd.GridHere,
         listOf("ابلغ المرافق", "ابلغ اهلي", "نبه المرافق", "خبر المرافق", "ارسل للمرافق", "notify caregiver", "tell my caregiver") to Cmd.Caregiver,
         listOf("افتحه", "افتحها", "افتح التطبيق مره ثانيه", "open it", "open it again") to Cmd.OpenApp("به"),
+        listOf("ابدا التسبيح", "ابدأ التسبيح", "المسبحه", "سبح معاي", "نسبح", "عداد التسبيح", "شغل المسبحه",
+            "start counting dhikr", "tasbeeh") to Cmd.Tasbeeh(true),
+        listOf("نومني", "نوميني", "عايز انام", "داير انام", "دايره انام", "عايزه انام", "وضع النوم", "قران النوم", "sleep mode") to Cmd.Sleep(30),
+        listOf("صحيت", "الغ النوم", "وقف النوم", "cancel sleep") to Cmd.Sleep(0),
+        listOf("دعاء اليوم", "اديني دعاء", "ادعيه", "دعاء", "dua of the day") to Cmd.Daily("dua"),
+        listOf("حديث اليوم", "اديني حديث", "حديث", "hadith of the day") to Cmd.Daily("hadith"),
+        listOf("الاضاءه كامله", "اعلي اضاءه", "الاضاءه علي الاخر", "اكتر اضاءه", "max brightness", "full brightness") to Cmd.Brightness("max"),
+        listOf("اقل اضاءه", "الاضاءه علي الاقل", "اضعف اضاءه", "min brightness", "lowest brightness") to Cmd.Brightness("min"),
+        listOf("الاضاءه تلقائيه", "اضاءه تلقائيه", "الاضاءه براها", "auto brightness") to Cmd.Brightness("auto"),
+        listOf("علي الاضاءه", "زيد الاضاءه", "ارفع الاضاءه", "نور الشاشه", "الشاشه ضلمه", "الشاشه مظلمه", "brightness up", "brighter") to Cmd.Brightness("up"),
+        listOf("قلل الاضاءه", "نزل الاضاءه", "وطي الاضاءه", "خفف الاضاءه", "الشاشه منوره شديد", "brightness down", "dimmer") to Cmd.Brightness("down"),
+        listOf("غمق الشاشه", "عتم الشاشه", "فلتر الليل", "شغل فلتر الليل", "dim the screen") to Cmd.Dim(true),
+        listOf("شيل الفلتر", "شيل التعتيم", "وقف فلتر الليل", "رجع الشاشه عادي", "undim the screen") to Cmd.Dim(false),
+        listOf("لف الشاشه", "خلي الشاشه تلف", "شغل التدوير", "التدوير التلقائي", "rotate the screen", "auto rotate") to Cmd.Rotate(true),
+        listOf("وقف التدوير", "قفل التدوير", "الشاشه ما تلف", "ثبت الشاشه", "lock rotation") to Cmd.Rotate(false),
+        listOf("خلي الشاشه شغاله", "خلي الشاشه ما تقفل", "ما تطفي الشاشه", "الشاشه ما تطفي", "keep the screen on", "keep screen on") to Cmd.KeepScreen(true),
+        listOf("خلي الشاشه تقفل", "الشاشه تقفل عادي", "خلي الشاشه تطفي", "let the screen sleep") to Cmd.KeepScreen(false),
         listOf("انت وين", "انتي وين", "وينك", "التلفون وين", "تلفوني وين", "وين التلفون", "وين تلفوني", "الموبايل وين",
             "where are you", "find my phone", "find the phone") to Cmd.FindPhone(true),
         listOf("لقيتك", "لقيتو", "لقيته", "لقيت التلفون", "found you", "found it", "found the phone") to Cmd.FindPhone(false),
@@ -542,6 +567,7 @@ object Commands {
 
     fun parse(text: String): Cmd? {
         if (isEmergency(text)) return Cmd.Emergency
+        if (Fun.calc(text) != null) return Cmd.Calc(text)
         teachOf(text)?.let { return it }
         sudaneseSpecial(text)?.let { return it }
         val cmd = parseCore(text, false) ?: parseCore(text, true) ?: wanted(text)
@@ -635,6 +661,20 @@ object Commands {
         return null
     }
 
+    /** "ساعه" → 60, "نص ساعه" → 30, "ربع ساعه" → 15, "20 دقيقه" → 20, "ساعتين" → 120. */
+    fun sleepMinutes(r: String): Int? {
+        val t = normalize(r)
+        val n = t.split(" ").firstNotNullOfOrNull { it.toIntOrNull() ?: toNumber(it) }
+        return when {
+            has(t, "ربع ساعه") -> 15
+            has(t, "نص ساعه") -> 30
+            has(t, "ساعتين") -> 120
+            has(t, "ساعه") -> (n ?: 1) * 60
+            has(t, "دقيقه", "دقايق", "دقائق", "minutes", "minute") && n != null -> n
+            else -> null
+        }?.coerceIn(5, 240)
+    }
+
     private val YOUTUBE = setOf("اليوتيوب", "يوتيوب", "youtube", "اليوتوب", "يوتوب")
 
     /**
@@ -698,6 +738,7 @@ object Commands {
         rest(w, "شغل مشهد", "فعل مشهد", "شغل وضع", "فعل وضع", "مشهد", "run scene", "scene")?.let { return Cmd.Scene(it) }
 
         talkOf(w, t)?.let { return it }
+        rest(w, "نومني", "نوميني", "عايز انام", "داير انام")?.let { r -> sleepMinutes(r)?.let { return Cmd.Sleep(it) } }
         playVideoOf(w)?.let { return it }
         // "ابحث في اليوتيوب عن قطط" / "search in youtube for cats"
         rest(w, "ابحث في", "ابحث علي", "ابحث ب", "search in", "search on")?.let { r ->
@@ -899,6 +940,10 @@ object Commands {
         return null
     }
 
+    /** Modes that take over listening (a game, the prayer beads, ringing...) start only when said plainly. */
+    private fun neverGuessed(cmd: Cmd) = cmd is Cmd.Tasbeeh || cmd is Cmd.Sleep || cmd is Cmd.Game || cmd is Cmd.FindPhone ||
+        cmd is Cmd.TranslateMode || cmd is Cmd.KeepScreen || cmd is Cmd.Rotate || cmd is Cmd.Dim || cmd is Cmd.VoiceNote
+
     /** Last resort for a short sentence: a known phrase that sounds almost the same (one sound different). */
     private fun nearest(t: String, wordCount: Int): Cmd? {
         if (wordCount > 3) return null
@@ -906,7 +951,7 @@ object Commands {
         if (k.length < 4) return null
         for ((phrases, cmd) in FIXED) for (p in phrases) {
             if (cmd is Cmd.Emergency || cmd is Cmd.StopListening || cmd is Cmd.Send || cmd is Cmd.ClearText || cmd is Cmd.Mute ||
-                cmd is Cmd.Train || cmd is Cmd.Bubble || cmd is Cmd.Head) continue
+                cmd is Cmd.Train || cmd is Cmd.Bubble || cmd is Cmd.Head || neverGuessed(cmd)) continue
             val pk = skeleton(p)
             if (pk.length >= 4 && pk[0] == k[0] && distance(pk, k) <= 1) return cmd
         }
@@ -962,7 +1007,7 @@ object Commands {
         var best: Pair<String, Cmd>? = null
         var bestScore = 0.0
         for ((phrases, cmd) in FIXED) {
-            if (cmd is Cmd.Emergency || cmd is Cmd.StopListening || cmd is Cmd.Send || cmd is Cmd.ClearText || cmd is Cmd.Mute || cmd is Cmd.Train) continue   // never by guess
+            if (cmd is Cmd.Emergency || cmd is Cmd.StopListening || cmd is Cmd.Send || cmd is Cmd.ClearText || cmd is Cmd.Mute || cmd is Cmd.Train || neverGuessed(cmd)) continue   // never by guess
             for (p in phrases) {
                 if (p.length < 4 || isArabic(p) != isArabic(t)) continue
                 val pSk = words(p).map { stem(it) }.filter { it.length >= 2 }

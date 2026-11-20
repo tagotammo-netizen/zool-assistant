@@ -137,4 +137,160 @@ object Fun {
 
     /** Into which language: English for Arabic, Arabic for anything else. */
     fun translateTo(text: String): String = if (Commands.isArabic(text)) "English" else "Sudanese Arabic"
+
+    // ---------------------------------------------------------------- the prayer beads (المسبحة)
+
+    /** The words counted, written without spaces (Whisper writes "الحمدلله" and "الحمد لله"). */
+    val DHIKR = listOf(
+        "سبحانالله" to "سبحان الله", "الحمدلله" to "الحمد لله", "اللهاكبر" to "الله أكبر",
+        "لاالهالاالله" to "لا إله إلا الله", "استغفرالله" to "أستغفر الله", "عليمحمد" to "الصلاة على النبي",
+    )
+
+    /** How many times each word was said in one sentence ("سبحان الله سبحان الله" → 2). */
+    fun countDhikr(heard: String): Map<String, Int> {
+        val joined = Commands.normalize(heard).replace(" ", "")
+        val out = LinkedHashMap<String, Int>()
+        for ((key, name) in DHIKR) {
+            var n = 0
+            var at = joined.indexOf(key)
+            while (at >= 0) { n++; at = joined.indexOf(key, at + key.length) }
+            if (n > 0) out[name] = n
+        }
+        return out
+    }
+
+    // ---------------------------------------------------------------- the daily supplication and hadith
+
+    /** [text], then where it is from. Short, well known, and said word for word. */
+    data class Daily(val text: String, val source: String, val meaning: String = "")
+
+    val DUAS = listOf(
+        Daily("ربنا آتنا في الدنيا حسنة وفي الآخرة حسنة وقنا عذاب النار", "سورة البقرة، الآية 201"),
+        Daily("رب اشرح لي صدري ويسر لي أمري", "سورة طه، الآيتين 25 و26"),
+        Daily("رب زدني علما", "سورة طه، الآية 114"),
+        Daily("حسبنا الله ونعم الوكيل", "سورة آل عمران، الآية 173"),
+        Daily("لا إله إلا أنت سبحانك إني كنت من الظالمين", "سورة الأنبياء، الآية 87"),
+        Daily("ربنا لا تزغ قلوبنا بعد إذ هديتنا وهب لنا من لدنك رحمة إنك أنت الوهاب", "سورة آل عمران، الآية 8"),
+        Daily("رب إني لما أنزلت إلي من خير فقير", "سورة القصص، الآية 24"),
+        Daily("ربنا ظلمنا أنفسنا وإن لم تغفر لنا وترحمنا لنكونن من الخاسرين", "سورة الأعراف، الآية 23"),
+        Daily("ربنا هب لنا من أزواجنا وذرياتنا قرة أعين واجعلنا للمتقين إماما", "سورة الفرقان، الآية 74"),
+        Daily("رب اغفر لي ولوالدي وللمؤمنين يوم يقوم الحساب", "سورة إبراهيم، الآية 41"),
+        Daily("ربنا لا تؤاخذنا إن نسينا أو أخطأنا", "سورة البقرة، الآية 286"),
+        Daily("رب ارحمهما كما ربياني صغيرا", "سورة الإسراء، الآية 24"),
+    )
+
+    val HADITHS = listOf(
+        Daily("إنما الأعمال بالنيات", "متفق عليه", "أجر كل عمل على حسب نيتك فيهو."),
+        Daily("الكلمة الطيبة صدقة", "متفق عليه", "الكلام الحلو للناس ليك فيهو أجر زي الصدقة."),
+        Daily("من كان يؤمن بالله واليوم الآخر فليقل خيرا أو ليصمت", "متفق عليه", "يا تقول كلام كويس، يا تسكت."),
+        Daily("لا يؤمن أحدكم حتى يحب لأخيه ما يحب لنفسه", "متفق عليه", "الإيمان الكامل إنك تحب للناس الخير البتحبو لنفسك."),
+        Daily("المسلم من سلم المسلمون من لسانه ويده", "متفق عليه", "المسلم الحق ما بيأذي زول لا بكلامو ولا بإيدو."),
+        Daily("الدين النصيحة", "رواه مسلم", "الدين إنك تكون صادق ومخلص مع الناس."),
+        Daily("أحب الأعمال إلى الله أدومها وإن قل", "متفق عليه", "العمل القليل الدايم أحسن من الكتير البينقطع."),
+        Daily("يسروا ولا تعسروا، وبشروا ولا تنفروا", "متفق عليه", "سهّل على الناس وما تصعّبها، وفرّحهم وما تنفّرهم."),
+        Daily("ليس الشديد بالصرعة، إنما الشديد الذي يملك نفسه عند الغضب", "متفق عليه", "القوي الحقيقي البيمسك نفسو وقت الزعل."),
+        Daily("كلمتان خفيفتان على اللسان، ثقيلتان في الميزان، حبيبتان إلى الرحمن: سبحان الله وبحمده، سبحان الله العظيم", "متفق عليه"),
+        Daily("من سلك طريقا يلتمس فيه علما سهل الله له به طريقا إلى الجنة", "رواه مسلم", "أي زول ماشي يتعلم، الله بسهّل ليهو طريق الجنة."),
+        Daily("تبسمك في وجه أخيك لك صدقة", "رواه الترمذي", "ابتسامتك للناس فيها أجر."),
+        Daily("خيركم من تعلم القرآن وعلمه", "رواه البخاري", "أحسن الناس البيتعلم القرآن ويعلّمو لغيرو."),
+        Daily("لا تغضب", "رواه البخاري", "وصية قصيرة: ما تزعل، لأنو الزعل بيجيب كل شر."),
+    )
+
+    /** The same one all day, a new one each day. */
+    fun dailyPick(kind: String, dayOfYear: Int): Daily {
+        val list = if (kind == "hadith") HADITHS else DUAS
+        return list[Math.floorMod(dayOfYear, list.size)]
+    }
+
+    fun dailyText(kind: String, d: Daily): String = if (kind == "hadith")
+        "حديث اليوم: قال رسول الله صلى الله عليه وسلم: «${d.text}». ${d.source}." + (if (d.meaning.isNotEmpty()) " يعني: ${d.meaning}" else "")
+    else "دعاء اليوم: «${d.text}». ${d.source}."
+
+    // ---------------------------------------------------------------- the calculator
+
+    private val PLUS = setOf("زائد", "زايد", "زاد", "plus", "زيد")
+    private val MINUS = setOf("ناقص", "minus", "مطروح", "مطروحه", "نقص")
+    private val TIMES = setOf("في", "ضرب", "مضروب", "مضروبه", "times", "x")
+    private val DIVIDE = setOf("علي", "قسمه", "تقسيم", "مقسوم", "مقسومه", "divided")
+    private val FILL = setOf("زول", "كم", "بكم", "احسب", "احسبي", "احسبها", "لي", "يساوي", "يساوو", "تساوي", "بيساوي", "يعني",
+        "شنو", "قدر", "قداش", "what", "is", "calculate", "equals", "by", "how", "much", "the", "يا")
+    private val PERCENT = setOf("الميه", "المئه", "الميا", "بالميه", "بالمئه", "بالميا", "percent", "المية")
+    private val SCALE = mapOf("الف" to 1_000.0, "الاف" to 1_000.0, "الفين" to 2_000.0, "مليون" to 1_000_000.0,
+        "ملايين" to 1_000_000.0, "مليار" to 1_000_000_000.0, "ميه" to 100.0, "مية" to 100.0, "thousand" to 1_000.0, "million" to 1_000_000.0)
+
+    /**
+     * "كم 2500 في 3" → 7500; "15 في المية من 40 الف" → 6000; "1200 على 4 زائد 50" → 350.
+     * Null when it is not plainly a sum: every word must be a number, an operation or a filler word,
+     * so "ذكرني الساعة 9 في الصباح" stays a reminder.
+     */
+    fun calc(text: String): Double? {
+        var raw = text.replace(Regex("(\\d),(\\d{3})"), "$1$2")
+            .replace('٫', '.').replace(Regex("[٠-٩]")) { (it.value[0] - '٠').toString() }
+        raw = raw.replace(Regex("(\\d)\\.(\\d)"), "$1 فاصله $2")
+            .replace(Regex("(\\d)\\s*[x×*]\\s*(?=\\d)"), "$1 في ")
+            .replace("+", " زائد ").replace("×", " في ").replace("÷", " علي ").replace("/", " علي ").replace("%", " بالميه ")
+            .replace(Regex("(\\d)\\s*-\\s*(?=\\d)"), "$1 ناقص ")
+        val words = Commands.normalize(raw).split(" ").filter { it.isNotEmpty() }
+        // numbers and operations, in order; "%" makes "a % من b" into a * b / 100
+        val nums = ArrayList<Double>()
+        val ops = ArrayList<Char>()
+        var expectNumber = true
+        var i = 0
+        while (i < words.size) {
+            val w = words[i]
+            val value = w.toDoubleOrNull() ?: Commands.toNumber(w)?.toDouble() ?: SCALE[w]
+            when {
+                w in FILL -> {}
+                value != null -> {
+                    var v: Double = value
+                    if (w.toDoubleOrNull() != null && i + 2 < words.size && words[i + 1] == "فاصله") {
+                        words[i + 2].toDoubleOrNull()?.let { _ -> v = "$w.${words[i + 2]}".toDouble(); i += 2 }
+                    }
+                    if (!expectNumber && SCALE.containsKey(w)) {          // "2 الف": scales the number before it
+                        nums[nums.size - 1] = nums.last() * SCALE.getValue(w)
+                    } else if (!expectNumber) {
+                        return null
+                    } else {
+                        nums.add(v); expectNumber = false
+                    }
+                }
+                w in PERCENT || (w == "في" && i + 1 < words.size && words[i + 1] in PERCENT) -> {
+                    if (expectNumber) return null
+                    if (w == "في") i++
+                    ops.add('%'); expectNumber = true
+                    if (i + 1 < words.size && words[i + 1] in setOf("من", "of")) i++
+                }
+                w in PLUS -> { if (expectNumber) return null; ops.add('+'); expectNumber = true }
+                w in MINUS -> { if (expectNumber) return null; ops.add('-'); expectNumber = true }
+                w in TIMES -> { if (expectNumber) return null; ops.add('*'); expectNumber = true }
+                w in DIVIDE -> { if (expectNumber) return null; ops.add('/'); expectNumber = true }
+                else -> return null
+            }
+            i++
+        }
+        if (nums.size < 2 || ops.size != nums.size - 1) return null
+        // × ÷ and % first, then + −
+        val n2 = arrayListOf(nums[0])
+        val o2 = ArrayList<Char>()
+        for (k in ops.indices) {
+            val b = nums[k + 1]
+            when (ops[k]) {
+                '*' -> n2[n2.size - 1] = n2.last() * b
+                '/' -> { if (b == 0.0) return Double.NaN; n2[n2.size - 1] = n2.last() / b }
+                '%' -> n2[n2.size - 1] = n2.last() * b / 100.0
+                else -> { o2.add(ops[k]); n2.add(b) }
+            }
+        }
+        var r = n2[0]
+        for (k in o2.indices) r = if (o2[k] == '+') r + n2[k + 1] else r - n2[k + 1]
+        return r
+    }
+
+    /** 7500 → "7500", 2.5 → "2.5", 1/3 → "0.33" */
+    fun number(x: Double): String {
+        if (x.isNaN()) return "ما بتنقسم على صفر"
+        val rounded = Math.round(x * 100) / 100.0
+        return if (rounded == Math.floor(rounded) && Math.abs(rounded) < 1e15) rounded.toLong().toString()
+        else String.format(java.util.Locale.US, "%.2f", rounded).trimEnd('0').trimEnd('.')
+    }
 }

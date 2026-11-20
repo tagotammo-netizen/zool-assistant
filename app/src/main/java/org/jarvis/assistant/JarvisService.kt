@@ -15,6 +15,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.Canvas
+import android.graphics.Color
 import android.hardware.GeomagneticField
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -65,6 +66,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.widget.TextView
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -1823,6 +1825,234 @@ class JarvisService : AccessibilityService() {
         })
     }
 
+    // ------------------------------------------------------------------ the prayer beads
+
+    private class Beads { var total = 0; val each = LinkedHashMap<String, Int>() }
+    private var beads: Beads? = null
+    private var beadsView: TextView? = null
+    private val beadsTimeout = Runnable { if (beads != null) respond(endTasbeeh()) }
+
+    /** Count every "سبحان الله", "الحمد لله"… heard; a big counter on screen (a tap adds one). */
+    private fun startTasbeeh(): String {
+        if (beads != null) return t("المسبحة شغّالة.", "Already counting.")
+        beads = Beads()
+        if (!listening && granted(Manifest.permission.RECORD_AUDIO)) startListening(false)
+        showBeads()
+        main.postDelayed(beadsTimeout, 30 * 60_000L)
+        return t("المسبحة جاهزة. سبّح من غير «زول» وأنا بعد. قول «خلاص» عشان أقول ليك العدد.",
+            "Counting. Say the words without the wake word; say: stop, for the total.")
+    }
+
+    private fun tasbeehHeard(heard: String) {
+        val b = beads ?: return
+        main.removeCallbacks(beadsTimeout)
+        main.postDelayed(beadsTimeout, 30 * 60_000L)
+        val n = Commands.normalize(heard).trim()
+        if (n in setOf("خلاص", "خلاص التسبيح", "وقف التسبيح", "كفايه", "انتهيت", "stop")) { respond(endTasbeeh()); return }
+        if (n in setOf("صفر", "صفر العداد", "من جديد", "ابدا من جديد", "reset")) { b.total = 0; b.each.clear(); paintBeads(); beep(1); return }
+        val counted = Fun.countDhikr(heard)
+        if (counted.isEmpty()) { resume(200); return }
+        val before = b.total
+        for ((k, v) in counted) { b.each[k] = (b.each[k] ?: 0) + v; b.total += v }
+        paintBeads()
+        when {
+            b.total / 100 > before / 100 -> respond(t("${b.total}. ما شاء الله.", "${b.total}."))
+            b.total / 33 > before / 33 -> { beep(2); resume(200) }
+            else -> resume(200)
+        }
+    }
+
+    private fun addBead() {
+        val b = beads ?: return
+        val before = b.total
+        b.total++
+        paintBeads()
+        if (b.total / 33 > before / 33) beep(2)
+    }
+
+    private fun endTasbeeh(): String {
+        val b = beads ?: return t("المسبحة ما شغّالة.", "Not counting.")
+        beads = null
+        main.removeCallbacks(beadsTimeout)
+        hideBeads()
+        if (b.total == 0) return t("قفلت المسبحة.", "Stopped.")
+        val parts = b.each.entries.joinToString("، ") { "${it.key} ${it.value}" }
+        return t("سبّحت ${b.total} مرة" + (if (parts.isNotEmpty()) ": $parts." else ".") + " تقبّل الله.", "Total: ${b.total}.")
+    }
+
+    private fun showBeads() {
+        hideBeads()
+        val d = resources.displayMetrics.density
+        val v = TextView(this).apply {
+            textSize = 44f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding((22 * d).toInt(), (10 * d).toInt(), (22 * d).toInt(), (10 * d).toInt())
+            background = GradientDrawable().apply { cornerRadius = 28 * d; setColor(Color.argb(215, 20, 70, 50)) }
+            contentDescription = "عداد التسبيح: اضغط عشان تزيد واحد، واضغط طويل عشان تقفل"
+            setOnClickListener { addBead() }
+            setOnLongClickListener { respond(endTasbeeh()); true }
+        }
+        val lp = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT)
+        lp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        lp.y = (70 * d).toInt()
+        try { (getSystemService(WINDOW_SERVICE) as WindowManager).addView(v, lp); beadsView = v; paintBeads() } catch (_: Exception) {}
+    }
+
+    private fun paintBeads() {
+        val b = beads ?: return
+        beadsView?.text = "📿 ${b.total}"
+    }
+
+    private fun hideBeads() {
+        beadsView?.let { try { (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(it) } catch (_: Exception) {} }
+        beadsView = null
+    }
+
+    // ------------------------------------------------------------------ "زول نوّمني"
+
+    private var sleepVolume = -1
+    private var sleepEnd = 0L
+    private val sleepTick = object : Runnable {
+        override fun run() {
+            val left = sleepEnd - SystemClock.elapsedRealtime()
+            val audio = getSystemService(AUDIO_SERVICE) as AudioManager
+            if (left <= 0) { cancelSleep(false); return }
+            // the last three minutes: one step quieter every so often, down to the lowest
+            if (left < 180_000 && sleepVolume > 0) {
+                val now = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+                val target = (sleepVolume * left / 180_000.0).toInt().coerceAtLeast(1)
+                if (now > target) try { audio.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0) } catch (_: Exception) {}
+            }
+            main.postDelayed(this, 10_000)
+        }
+    }
+
+    /** Surat al-Mulk and on, quietly; the sound fades over the last minutes and stops after [minutes]. */
+    private fun sleepWithQuran(minutes: Int): String {
+        cancelSleep(false)
+        val audio = getSystemService(AUDIO_SERVICE) as AudioManager
+        sleepVolume = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+        val calm = (audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC) * 0.35).toInt().coerceAtLeast(1)
+        if (sleepVolume > calm) try { audio.setStreamVolume(AudioManager.STREAM_MUSIC, calm, 0) } catch (_: Exception) {}
+        val restoreTo = sleepVolume
+        sleepVolume = minOf(sleepVolume, calm)
+        sleepRestore = restoreTo
+        sleepEnd = SystemClock.elapsedRealtime() + minutes * 60_000L
+        main.postDelayed(sleepTick, 10_000)
+        playQuran(listOf(67), null)
+        if (listening) stopListening(false)                       // the night is quiet; the mic rests too
+        val span = spanText(minutes)
+        return t("تصبح على خير. شغّلت سورة الملك بصوت هادي، وبقيف بعد $span.", "Good night. Quran for $minutes minutes.")
+    }
+
+    private var sleepRestore = -1
+
+    private fun cancelSleep(byVoice: Boolean): String {
+        main.removeCallbacks(sleepTick)
+        val was = sleepEnd != 0L
+        sleepEnd = 0L
+        if (was) {
+            quran?.stop()
+            if (sleepRestore >= 0) main.postDelayed({
+                try { (getSystemService(AUDIO_SERVICE) as AudioManager).setStreamVolume(AudioManager.STREAM_MUSIC, sleepRestore, 0) } catch (_: Exception) {}
+                sleepRestore = -1
+            }, 1_500)
+        }
+        sleepVolume = -1
+        return if (byVoice) (if (was) t("صباح الخير. وقّفت القرآن.", "Stopped.") else t("ما في مؤقت نوم.", "No sleep timer.")) else ""
+    }
+
+    // ------------------------------------------------------------------ the screen by voice
+
+    /** Brightness, rotation: Android lets an app change them only after the person allows it once. */
+    private fun canWriteSettings(): Boolean {
+        if (android.provider.Settings.System.canWrite(this)) return true
+        try {
+            startActivity(Intent(android.provider.Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:$packageName"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: Exception) {}
+        return false
+    }
+
+    private val BRIGHT_STEPS = intArrayOf(3, 15, 35, 65, 105, 155, 205, 255)
+
+    private fun brightness(how: String): String {
+        if (!canWriteSettings()) return t("اسمح لزول يغيّر إعدادات النظام (فتحتها ليك)، وبعدها قول تاني.", "Allow Zol to change system settings, then say it again.")
+        val cr = contentResolver
+        try {
+            if (how == "auto") {
+                android.provider.Settings.System.putInt(cr, android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE,
+                    android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC)
+                return t("الإضاءة بقت تلقائية.", "Brightness is automatic.")
+            }
+            android.provider.Settings.System.putInt(cr, android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE,
+                android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
+            val now = android.provider.Settings.System.getInt(cr, android.provider.Settings.System.SCREEN_BRIGHTNESS, 128)
+            val at = BRIGHT_STEPS.indices.minByOrNull { Math.abs(BRIGHT_STEPS[it] - now) } ?: 3
+            val next = when (how) {
+                "max" -> BRIGHT_STEPS.last()
+                "min" -> BRIGHT_STEPS.first()
+                "up" -> BRIGHT_STEPS[minOf(at + 1, BRIGHT_STEPS.size - 1)]
+                else -> BRIGHT_STEPS[maxOf(at - 1, 0)]
+            }
+            android.provider.Settings.System.putInt(cr, android.provider.Settings.System.SCREEN_BRIGHTNESS, next)
+            if (next == now && how in setOf("up", "max")) return t("الإضاءة على الآخر.", "Brightness is at the top.")
+            if (next == now && how in setOf("down", "min")) return t("الإضاءة في الأقل. قول: غمّق الشاشة، لو عايزها أضلم.", "Lowest already. Say: dim the screen.")
+            return t("حاضر.", "Done.")
+        } catch (e: Exception) {
+            return t("ما قدرت أغيّر الإضاءة: ${e.message}", "Could not change the brightness.")
+        }
+    }
+
+    private var dimView: View? = null
+
+    /** A dark see-through layer over everything, darker than the lowest brightness; touches pass through. */
+    private fun dimScreen(on: Boolean): String {
+        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        dimView?.let { try { wm.removeView(it) } catch (_: Exception) {} }
+        dimView = null
+        if (!on) return t("رجّعت الشاشة عادي.", "Filter off.")
+        val v = View(this).apply { setBackgroundColor(Color.argb(150, 0, 0, 0)) }
+        val lp = WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT)
+        return try { wm.addView(v, lp); dimView = v; t("غمّقت الشاشة. قول «رجّع الشاشة عادي» عشان أشيلو.", "Screen dimmed.") }
+        catch (e: Exception) { t("ما قدرت: ${e.message}", "Could not dim the screen.") }
+    }
+
+    private fun autoRotate(on: Boolean): String {
+        if (!canWriteSettings()) return t("اسمح لزول يغيّر إعدادات النظام (فتحتها ليك)، وبعدها قول تاني.", "Allow Zol to change system settings, then say it again.")
+        return try {
+            android.provider.Settings.System.putInt(contentResolver, android.provider.Settings.System.ACCELEROMETER_ROTATION, if (on) 1 else 0)
+            if (on) t("الشاشة بتلف مع التلفون.", "Auto-rotate on.") else t("ثبّت الشاشة.", "Rotation locked.")
+        } catch (e: Exception) { t("ما قدرت: ${e.message}", "Could not change rotation.") }
+    }
+
+    private var awakeView: View? = null
+    private val awakeTimeout = Runnable { keepScreenOn(false) }
+
+    /** A tiny invisible window that asks Android to keep the screen on (three hours at most). */
+    private fun keepScreenOn(on: Boolean): String {
+        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        awakeView?.let { try { wm.removeView(it) } catch (_: Exception) {} }
+        awakeView = null
+        main.removeCallbacks(awakeTimeout)
+        if (!on) return t("الشاشة بتقفل عادي.", "The screen will sleep as usual.")
+        val v = View(this)
+        val lp = WindowManager.LayoutParams(1, 1, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON, PixelFormat.TRANSLUCENT)
+        return try {
+            wm.addView(v, lp); awakeView = v
+            main.postDelayed(awakeTimeout, 3 * 60 * 60_000L)
+            t("الشاشة ما بتقفل لحدي ما تقول «خلي الشاشة تقفل» (أو بعد 3 ساعات).", "The screen stays on (3 hours at most).")
+        } catch (e: Exception) { t("ما قدرت: ${e.message}", "Could not keep the screen on.") }
+    }
+
     // ------------------------------------------------------------------ YouTube
 
     private val youtube = "com.google.android.youtube"
@@ -2485,6 +2715,7 @@ class JarvisService : AccessibilityService() {
                 }
                 if (game != null) { log("سمعت: $heard"); gameHeard(Commands.stripWake(heard) ?: heard); return }
                 if (translating) { translateHeard(Commands.stripWake(heard) ?: heard); return }
+                if (beads != null) { tasbeehHeard(Commands.stripWake(heard) ?: heard); return }
             }
             if (trainQueue != null && heard.isNotBlank() && list.none { Commands.isEmergency(it) }) {
                 log("سمعت: $heard")
@@ -2769,7 +3000,8 @@ class JarvisService : AccessibilityService() {
         prefs.edit().putString("pro_morning_day", today).apply()
         val list = reminders().filter { it.hour * 60 + it.minute > hour * 60 }.sortedBy { it.hour * 60 + it.minute }
         val plan = if (list.isEmpty()) "" else " " + t("تذكيرات اليوم: ", "Today: ") + list.joinToString("، ") { "${it.text} ${clock(it.hour, it.minute)}" } + "."
-        announce(t("صباح الخير!", "Good morning!") + plan, false)
+        val dua = if (arabic) " " + Fun.dailyText("dua", Fun.dailyPick("dua", java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_YEAR))) else ""
+        announce(t("صباح الخير!", "Good morning!") + plan + dua, false)
         main.postDelayed({ if (listening) runAll(Commands.parseAll("صباح الخير"), 0) }, 4000)
     }
 
@@ -3740,6 +3972,15 @@ class JarvisService : AccessibilityService() {
             is Cmd.TranslateMode -> translateMode(c.on)
             Cmd.VoiceNote -> readVoiceNote(null, 0L)
             is Cmd.VoiceMessage -> recordVoiceMessage(c.name)
+            is Cmd.Tasbeeh -> if (c.on) startTasbeeh() else endTasbeeh()
+            is Cmd.Sleep -> if (c.minutes > 0) sleepWithQuran(c.minutes) else cancelSleep(true)
+            is Cmd.Daily -> Fun.dailyText(c.kind, Fun.dailyPick(c.kind, java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_YEAR)))
+            is Cmd.Brightness -> brightness(c.how)
+            is Cmd.Dim -> dimScreen(c.on)
+            is Cmd.Rotate -> autoRotate(c.on)
+            is Cmd.KeepScreen -> keepScreenOn(c.on)
+            is Cmd.Calc -> Fun.calc(c.text)?.let { t("بيساوي ${Fun.number(it)}.", "That is ${Fun.number(it)}.") }
+                ?: t("ما فهمت الحساب.", "I did not get the sum.")
             is Cmd.Photo -> takePhoto(c.seconds)
             is Cmd.OpenChat -> openChat(c.name)
             is Cmd.Dictation -> if (c.start) startDictation() else { dictating = false; t("انتهى الإملاء.", "Dictation finished.") }
