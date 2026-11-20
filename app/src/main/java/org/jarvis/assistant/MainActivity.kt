@@ -44,6 +44,8 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.drawerlayout.widget.DrawerLayout
 import com.google.android.material.button.MaterialButtonToggleGroup
+import com.google.android.material.chip.Chip
+import com.google.android.material.chip.ChipGroup
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.progressindicator.LinearProgressIndicator
 
@@ -314,9 +316,65 @@ class MainActivity : AppCompatActivity() {
     private fun setupSections() {
         for ((header, body) in sectionHeaders())
             header.setOnClickListener { openSection(header, body.visibility != View.VISIBLE) }
+        setupTabs()
+    }
+
+    /** The categories of the settings bar, each with its sections (in the order they are in the drawer). */
+    private val settingTabs = listOf(
+        "⚙️ الأساسي" to listOf(R.id.secGeneral, R.id.secListen, R.id.secVoice, R.id.secAi, R.id.secDialect),
+        "💬 التواصل" to listOf(R.id.secNotifs, R.id.secPro),
+        "🖐 التحكم" to listOf(R.id.secHead, R.id.secAccess, R.id.secHome),
+        "🛡 الأمان" to listOf(R.id.secEmergency, R.id.secSafety, R.id.secPower),
+        "🕌 الصلاة والقرآن" to listOf(R.id.secPrayer, R.id.secQuran),
+        "🛠 المساعدة" to listOf(R.id.secSupport, R.id.secBackup),
+    )
+    private var settingsTab = -1
+    private val tabChips = ArrayList<Chip>()
+
+    private fun setupTabs() {
+        val group = findViewById<ChipGroup>(R.id.settingsTabs)
+        for ((i, tab) in settingTabs.withIndex()) {
+            val chip = Chip(this).apply {
+                id = View.generateViewId()
+                text = tab.first
+                isCheckable = true
+                isCheckedIconVisible = false
+                setOnClickListener { showTab(i) }
+            }
+            group.addView(chip)
+            tabChips.add(chip)
+        }
+        showTab(prefs.getInt("settings_tab", 0).coerceIn(0, settingTabs.size - 1))
+    }
+
+    /** List only the sections of one category (all closed); the system check is shown with the first one. */
+    private fun showTab(index: Int) {
+        tabChips.getOrNull(index)?.isChecked = true
+        if (index == settingsTab) return
+        settingsTab = index
+        prefs.edit().putInt("settings_tab", index).apply()
+        val ids = settingTabs[index].second
+        val list = findViewById<LinearLayout>(R.id.settingsList)
+        var shown = index == 0                       // what comes before the first section: the system check
+        var i = 0
+        while (i < list.childCount) {
+            val v = list.getChildAt(i)
+            if (v.tag == "section") {
+                shown = v.id in ids
+                v.visibility = if (shown) View.VISIBLE else View.GONE
+                (v as? TextView)?.let { chevron(it, false) }
+                list.getChildAt(i + 1)?.visibility = View.GONE   // its body
+                i += 2
+                continue
+            }
+            v.visibility = if (shown) View.VISIBLE else View.GONE
+            i++
+        }
+        findViewById<ScrollView>(R.id.settingsScroll).scrollTo(0, 0)
     }
 
     private fun openSection(target: TextView, open: Boolean) {
+        if (open) settingTabs.indexOfFirst { target.id in it.second }.takeIf { it >= 0 }?.let { showTab(it) }
         for ((header, body) in sectionHeaders()) {
             val show = header === target && open
             body.visibility = if (show) View.VISIBLE else View.GONE

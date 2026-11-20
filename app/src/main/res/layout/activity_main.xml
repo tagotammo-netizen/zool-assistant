@@ -482,6 +482,25 @@
                 app:tint="@color/muted" />
         </LinearLayout>
 
+        <!-- category bar: only the sections of the chosen category are listed -->
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="6dp"
+            android:clipToPadding="false"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:scrollbars="none">
+
+            <com.google.android.material.chip.ChipGroup
+                android:id="@+id/settingsTabs"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                app:selectionRequired="true"
+                app:singleLine="true"
+                app:singleSelection="true" />
+        </HorizontalScrollView>
+
         <ScrollView
             android:id="@+id/settingsScroll"
             android:layout_width="match_parent"
@@ -748,7 +767,7 @@
                     android:id="@+id/secEmergency"
                     style="@style/JSection"
                     android:drawableStart="@drawable/ic_warning"
-                    android:text="الطوارئ والمرافق" />
+                    android:text="الطوارئ" />
 
                 <LinearLayout style="@style/JSectionBody">
 
@@ -1777,7 +1796,7 @@
                     android:id="@+id/secSafety"
                     style="@style/JSection"
                     android:drawableStart="@drawable/ic_warning"
-                    android:text="الأمان والمرافق" />
+                    android:text="المرافق والاطمئنان" />
 
                 <LinearLayout style="@style/JSectionBody">
 
@@ -2082,7 +2101,7 @@
                     android:id="@+id/secPower"
                     style="@style/JSection"
                     android:drawableStart="@drawable/ic_lock"
-                    android:text="البطارية والأمان" />
+                    android:text="البطارية وكلمة السر" />
 
                 <LinearLayout style="@style/JSectionBody">
 
