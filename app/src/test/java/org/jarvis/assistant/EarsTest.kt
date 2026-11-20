@@ -39,6 +39,12 @@ class EarsTest {
         assertTrue(v.isEcho("قل زول ثم الامر", 201_000))
     }
 
+    @Test fun theTimeInOneWord() {
+        assertEquals(Cmd.Time, Commands.parse("زول ساعة"))
+        assertEquals(Cmd.Time, Commands.parse("زول الساعة؟"))
+        assertEquals(Cmd.OpenApp("الساعة"), Commands.parse("زول افتح الساعة"))
+    }
+
     @Test fun wakeOpensTheSentence() {
         assertTrue(Commands.wakeAtStart("زول افتح الواتساب"))
         assertTrue(Commands.wakeAtStart("يا زول افتح الواتساب"))

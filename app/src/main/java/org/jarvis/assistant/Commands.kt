@@ -727,6 +727,8 @@ object Commands {
         if (t in SPEAKER_OFF) return Cmd.Speaker(false)
         if (t in HUSH) return Cmd.Hush
         if (t == "هنا" || t == "here") return Cmd.GridHere
+        // "زول ساعه" / "زول الساعه؟": the time (opening the clock app is "افتح الساعه")
+        if (t in setOf("ساعه", "الساعه", "الوقت", "الزمن", "الساعه كم الان", "time")) return Cmd.Time
         modeOf(t)?.let { return Cmd.Mode(it) }
         devotional(t)?.let { return it }
         rest(w, "نفذ لي", "نفذ", "كلفك", "agent", "do this", "carry out")?.let { return Cmd.Agent(it) }

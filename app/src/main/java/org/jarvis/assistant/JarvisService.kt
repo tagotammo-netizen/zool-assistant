@@ -311,7 +311,7 @@ class JarvisService : AccessibilityService() {
         ensureRecognizer()
         listening = true
         errors = 0
-        log("أستمع الآن (المحرك: ${engineLabel()}). قل: ${Commands.wakeWord} ثم الأمر.")
+        log("أستمع الآن (المحرك: ${if (cloudStt() && cloudSttReady()) "Groq Whisper" else engineLabel()}). قل: ${Commands.wakeWord} ثم الأمر.")
         paintBubble(false)
         main.removeCallbacks(alertsTask)
         main.postDelayed(alertsTask, 20_000)
@@ -4726,7 +4726,8 @@ class JarvisService : AccessibilityService() {
         }
         val field = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
             ?: screenNodes().firstOrNull { it.isEditable && it.isVisibleToUser }
-            ?: return t("افتح المحادثة أولاً.", "Open the chat first.")
+            ?: return t("ما في رسالة جات قريب أرد عليها. قول: زول رسّل لأحمد قول ليهو جاي، أو افتح المحادثة وقول: رد.",
+                "No recent message to reply to. Say: message Ahmed saying I'm coming, or open the chat and say: reply.")
         return ask(t("أرد بـ: «$body». نعم أو لا؟", "Reply: $body. Yes or no?")) {
             val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, body) }
             field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
