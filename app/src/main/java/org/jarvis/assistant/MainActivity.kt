@@ -96,7 +96,7 @@ class MainActivity : AppCompatActivity() {
         Triple(R.id.switchFall, "fall_on", false), Triple(R.id.switchVolumeKeys, "switch_volume", false),
         Triple(R.id.switchRemote, "remote_on", false), Triple(R.id.switchPronounce, "tts_pronounce", true),
         Triple(R.id.switchClips, "voice_clips", true), Triple(R.id.switchAutoUpdate, "auto_update", true),
-        Triple(R.id.switchCloudStt, "stt_cloud", false), Triple(R.id.switchVoiceNotes, "vn_transcribe", false),
+        Triple(R.id.switchCloudStt, "stt_cloud", false), Triple(R.id.switchVoiceNotes, "vn_transcribe", false), Triple(R.id.switchStopButton, "stop_button", true),
     )
 
     private val befores = listOf(R.id.beforeNow to 0, R.id.before10 to 10, R.id.before15 to 15)
@@ -454,6 +454,7 @@ class MainActivity : AppCompatActivity() {
                 if (id == R.id.switchBubble) JarvisService.instance?.let { if (checked) it.showBubble() else it.hideBubble() }
                 if (key.startsWith("prayer_")) { ProactiveReceiver.schedulePrayer(this); renderPrayer() }
                 if (key == "remote_on" && checked) enableRemote()
+                if (key == "stop_button") JarvisService.instance?.refreshStopButton()
                 if (key == "stt_cloud") {
                     if (checked && groqKeyMissing()) askGroqKey(id) else JarvisService.instance?.listeningChanged()
                 }

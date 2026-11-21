@@ -683,6 +683,11 @@
                         android:text="«زول» كلمة نقولها كثيراً، فقد يستيقظ إذا سمع «يا زول» في حديث عادي. لذلك لا يستيقظ إلا إذا جاءت في أول الجملة أو آخرها." />
 
                     <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchStopButton"
+                        style="@style/JSwitch"
+                        android:text="زرار «وقّف» الأحمر فوق الشاشة لمن تكون في ميزة شغالة" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
                         android:id="@+id/switchTones"
                         style="@style/JSwitch"
                         android:layout_marginTop="8dp"

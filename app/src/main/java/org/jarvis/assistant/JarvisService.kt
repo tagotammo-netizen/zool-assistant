@@ -2543,44 +2543,56 @@ class JarvisService : AccessibilityService() {
         if (awakeView != null) add("الشاشة شغالة")
         if (eyeGestures != null) add("التحكم بالعيون")
         if (pc != null) add("الكمبيوتر")
-        if (head?.running == true && eyeGestures == null) add("التحكم بالرأس")
-        if (switches?.running == true && !eyesStartedSwitches) add("التنقل بالمفاتيح")
+        // head control and the switches are turned on in the settings and stay on: not on this button
         if (quran?.playing == true) add("القرآن")
         if (board?.shown == true) add("لوحة الكلام")
         if (recorder != null) add("التسجيل")
         if (captionListeners.isNotEmpty()) add("الكلام مكتوب")
-        if (agentGoal.isNotEmpty()) add("المساعد")
+        if (agentOn) add("المساعد")
     }
 
     /** Every feature stops and every screen of Zol's over the phone goes away; listening stays as it was. */
+    /** After a press the button stays away a moment, whatever happens. */
+    private var stopButtonQuietUntil = 0L
+
     fun stopEverything(): String {
         val was = running()
-        game = null; main.removeCallbacks(gameTimeout)
-        translating = false
-        if (beads != null) { beads = null; main.removeCallbacks(beadsTimeout); hideBeads() }
-        lesson = null; main.removeCallbacks(lessonTimeout)
-        learning = null; main.removeCallbacks(learnTimeout)
-        stopFindPhone()
-        cancelSleep(false)
-        dimScreen(false)
-        keepScreenOn(false)
-        if (eyeGestures != null) stopEyes()
-        if (pc != null) { head?.remote = null; pc?.stop(); pc = null }
-        if (head?.running == true) stopHead()
-        if (switches?.running == true) { switches?.stop(); switches = null; prefs.edit().putString("switch_mode", "off").apply() }
-        quran?.stop()
-        clipPlayer?.let { try { it.stop(); it.release() } catch (_: Exception) {} }
+        // each one on its own: one that fails must not keep the others (or the button) going
+        fun safely(step: () -> Unit) = try { step() } catch (_: Exception) {}
+        safely { game = null; main.removeCallbacks(gameTimeout) }
+        safely { translating = false }
+        safely { if (beads != null) { beads = null; main.removeCallbacks(beadsTimeout); hideBeads() } }
+        safely { lesson = null; main.removeCallbacks(lessonTimeout) }
+        safely { learning = null; main.removeCallbacks(learnTimeout) }
+        safely { stopFindPhone() }
+        safely { cancelSleep(false) }
+        safely { dimScreen(false) }
+        safely { keepScreenOn(false) }
+        safely { if (eyeGestures != null) stopEyes() }
+        safely { if (pc != null) { head?.remote = null; pc?.stop(); pc = null } }
+        safely { quran?.stop() }
+        safely { clipPlayer?.let { it.stop(); it.release() } }
         clipPlayer = null
-        if (board?.shown == true) hideBoard()
-        recorder?.let { try { it.stop() } catch (_: Exception) {}; try { it.release() } catch (_: Exception) {} }
-        recorder = null; recordFile?.delete()
-        if (agentGoal.isNotEmpty()) stopAgent(t("وقفت.", "Stopped."))
+        safely { if (board?.shown == true) hideBoard() }
+        safely { recorder?.let { r -> try { r.stop() } catch (_: Exception) {}; r.release() } }
+        recorder = null
+        safely { recordFile?.delete() }
+        safely { if (agentOn) stopAgent(t("وقفت.", "Stopped.")) }
+        agentOn = false; agentGoal = ""
         pending = null
-        tts?.stop()
-        sendBroadcast(Intent(ACTION_CLOSE_SCREENS).setPackage(packageName))     // the captions screen and the like
-        refreshStopButton()
+        safely { tts?.stop() }
+        safely { sendBroadcast(Intent(ACTION_CLOSE_SCREENS).setPackage(packageName)) }   // the captions screen and the like
+        stopButtonQuietUntil = SystemClock.elapsedRealtime() + 5_000
+        hideStopButton()
+        val stuck = running()
+        if (stuck.isNotEmpty()) log("ما قدرت أوقف: " + stuck.joinToString("، ") + ".")
         return if (was.isEmpty()) t("ما في حاجة شغالة.", "Nothing was running.")
-        else t("وقفت كل حاجة: ", "Stopped: ") + was.joinToString("، ") + "."
+        else t("وقفت: ", "Stopped: ") + was.joinToString("، ") + "."
+    }
+
+    private fun hideStopButton() {
+        stopButton?.let { try { (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(it) } catch (_: Exception) {} }
+        stopButton = null
     }
 
     private var stopButton: TextView? = null
@@ -2595,9 +2607,8 @@ class JarvisService : AccessibilityService() {
     fun refreshStopButton() {
         val names = running()
         val wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        if (names.isEmpty() || !prefs.getBoolean("stop_button", true)) {
-            stopButton?.let { try { wm.removeView(it) } catch (_: Exception) {} }
-            stopButton = null
+        if (names.isEmpty() || !prefs.getBoolean("stop_button", true) || SystemClock.elapsedRealtime() < stopButtonQuietUntil) {
+            hideStopButton()
             return
         }
         val label = "⏹ وقّف " + (if (names.size == 1) names[0] else "الكل (${names.size})")
@@ -3559,6 +3570,7 @@ class JarvisService : AccessibilityService() {
 
     private fun stopAgent(message: String) {
         agentOn = false
+        agentGoal = ""                                   // done: the stop button must not keep showing it
         main.removeCallbacks(agentRunnable)
         respond(message)
     }
