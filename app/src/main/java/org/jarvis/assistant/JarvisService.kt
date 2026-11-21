@@ -202,6 +202,7 @@ class JarvisService : AccessibilityService() {
         Thread { OfflinePack.copyDetector(this, whisper.dir()) }.start()
         main.postDelayed(habitTick, 60_000)
         main.postDelayed(stopButtonTick, 3_000)
+        main.postDelayed(planTick, 60_000)
         log("الخدمة تعمل.")
         ProactiveReceiver.schedule(this)
         try { registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) } catch (_: Exception) {}
@@ -246,6 +247,12 @@ class JarvisService : AccessibilityService() {
 
     /** A Bluetooth switch, a keyboard, or the volume keys when they are switches. */
     override fun onKeyEvent(event: KeyEvent): Boolean {
+        // the headset's button: talk to Zol without the wake word (play/pause still works while music plays)
+        if (prefs.getBoolean("headset_ptt", true) && (event.keyCode == KeyEvent.KEYCODE_HEADSETHOOK ||
+                (event.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE && !othersPlaying() && quran?.playing != true))) {
+            if (event.action == KeyEvent.ACTION_UP && event.repeatCount == 0) main.post { pushToTalk() }
+            return true
+        }
         val control = switches ?: return false
         if (!control.running) return false
         val key = SwitchScan.keyOf(event.keyCode, prefs.getString("switch_mode", "off") == "one", prefs.getBoolean("switch_volume", false))
@@ -833,12 +840,384 @@ class JarvisService : AccessibilityService() {
         cloudBusy = true
         cloudLastAt = now
         Thread {
+            // whose voice: when the person taught Zol their voice, someone else's sentence is not a command
+            val other = voiceprint.on() && voiceprint.embed(pcm)?.let { v ->
+                voiceprint.enrolled()?.let { Speaker.cosine(v, it) < Speaker.SAME } } == true
             val text = try { groqTranscribe(pcm) } finally { cloudBusy = false }
             main.post {
                 lastActivity = SystemClock.elapsedRealtime()
-                if (!text.isNullOrBlank() && listening) processResults(listOf(text.trim()))
+                if (text.isNullOrBlank() || !listening) return@post
+                if (other && !Commands.isEmergency(text)) { otherVoice(text); resume(200); return@post }
+                processResults(listOf(text.trim()))
             }
         }.start()
+    }
+
+    // ------------------------------------------------------------------ the life log, plans from messages, the secretary
+
+    private val lifeFile by lazy { java.io.File(filesDir, "lifelog.txt") }
+    private var lifeCache: MutableList<LifeLog.Entry>? = null
+
+    private fun life(): MutableList<LifeLog.Entry> = lifeCache ?: (try { LifeLog.decode(lifeFile.readText()).toMutableList() }
+        catch (_: Exception) { ArrayList() }).also { lifeCache = it }
+
+    /** A message came: kept, checked for a plan, and maybe answered (the secretary). */
+    fun noteLife(app: String, who: String, text: String, at: Long) {
+        main.post {
+            val list = life()
+            val e = LifeLog.Entry(at, app, who, text)
+            if (list.any { it.who == who && it.text == text && Math.abs(it.time - at) < 120_000 }) return@post
+            list.add(e)
+            val kept = LifeLog.trim(list, System.currentTimeMillis())
+            lifeCache = kept.toMutableList()
+            Thread { try { lifeFile.writeText(kept.joinToString("\n") { LifeLog.encode(it) }) } catch (_: Exception) {} }.start()
+            if (prefs.getBoolean("plans_on", true) && aiReady() && LifeLog.looksLikePlan(text)) findPlan(e)
+            if (prefs.getBoolean("secretary_on", false) && aiReady()) secretary(e)
+        }
+    }
+
+    private fun askMemory(question: String): String {
+        val now = System.currentTimeMillis()
+        val found = LifeLog.search(life(), question, now)
+        if (found.isEmpty()) return t("ما لقيت رسايل بالشكل ده في آخر شهر.", "I found no such messages in the last month.")
+        if (!aiReady()) return found.take(3).joinToString(". ") { LifeLog.format(it, now) }
+        val lines = found.joinToString("\n") { LifeLog.format(it, now) }
+        Thread {
+            val answer = cloudChat("You answer the user's question only from these messages they received (newest first). " +
+                "Answer in one or two short sentences in Sudanese Arabic; say who said it and when. If the messages do not answer it, say so.\n\n$lines",
+                question, 250)?.substringAfterLast("</think>")?.trim()
+            main.post { respond(answer?.takeIf { it.isNotBlank() } ?: found.take(3).joinToString(". ") { LifeLog.format(it, now) }) }
+        }.start()
+        return t("لحظة، بفتش في الرسايل.", "Looking through your messages.")
+    }
+
+    /** A message with a time in it: when it is a plan, offer a reminder an hour before. */
+    private fun findPlan(e: LifeLog.Entry) {
+        Thread {
+            val now = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm EEEE", java.util.Locale.US).format(java.util.Date())
+            val raw = cloudChat("Now it is $now. If this message sets a plan for the reader with a day and time (a visit, an appointment, " +
+                "an invitation), answer only JSON {\"plan\":true,\"when\":\"yyyy-MM-dd HH:mm\",\"what\":\"a few Arabic words\"}; " +
+                "otherwise only {\"plan\":false}.", "${e.who}: ${e.text}", 120) ?: return@Thread
+            val json = try { JSONObject(raw.substring(raw.indexOf('{'), raw.lastIndexOf('}') + 1)) } catch (_: Exception) { return@Thread }
+            if (!json.optBoolean("plan")) return@Thread
+            val at = try { java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).parse(json.optString("when"))?.time } catch (_: Exception) { null }
+                ?: return@Thread
+            if (at < System.currentTimeMillis() + 30 * 60_000L) return@Thread
+            val what = json.optString("what").ifBlank { "موعد" }
+            val remindAt = maxOf(at - 60 * 60_000L, System.currentTimeMillis() + 10 * 60_000L)
+            val day = android.text.format.DateUtils.getRelativeTimeSpanString(at, System.currentTimeMillis(), android.text.format.DateUtils.DAY_IN_MILLIS)
+            val clock = java.text.SimpleDateFormat("h:mm", java.util.Locale.US).format(java.util.Date(at))
+            main.post {
+                respond(ask(t("${e.who} قال: «${e.text.take(80)}». أذكّرك بـ«$what» قبل ساعة ($day الساعة $clock)؟ نعم أو لا.",
+                    "Remind you of $what an hour before?")) {
+                    addPlan(remindAt, "$what مع ${e.who} الساعة $clock")
+                    t("حاضر، بذكّرك.", "I will remind you.")
+                })
+            }
+        }.start()
+    }
+
+    private fun addPlan(at: Long, text: String) {
+        val list = prefs.getString("plans", "").orEmpty().lines().filter { it.isNotBlank() } + "$at|$text"
+        prefs.edit().putString("plans", list.joinToString("\n")).apply()
+    }
+
+    /** Every minute: a plan whose time came is said. */
+    private val planTick = object : Runnable {
+        override fun run() {
+            main.postDelayed(this, 60_000)
+            val now = System.currentTimeMillis()
+            val lines = prefs.getString("plans", "").orEmpty().lines().filter { it.isNotBlank() }
+            val (due, later) = lines.partition { (it.substringBefore('|').toLongOrNull() ?: 0L) <= now }
+            if (due.isEmpty()) return
+            prefs.edit().putString("plans", later.joinToString("\n")).apply()
+            due.forEach { announce(t("تذكير: ", "Reminder: ") + it.substringAfter('|'), false, urgent = true) }
+        }
+    }
+
+    private val secretaryLog = ArrayList<String>()
+    private val secretaryLast = HashMap<String, Long>()
+
+    /** While the person rests: a short polite answer that they will reply later; nothing promised, nothing told. */
+    private fun secretary(e: LifeLog.Entry) {
+        val action = replyAction ?: return
+        val input = replyInput ?: return
+        if (replyFrom != e.who || SystemClock.elapsedRealtime() - replyAt > 30_000) return
+        val last = secretaryLast[e.who] ?: 0L
+        if (System.currentTimeMillis() - last < 30 * 60_000L) { secretaryLog.add("${e.who}: ${e.text.take(80)}"); return }
+        secretaryLast[e.who] = System.currentTimeMillis()
+        val persona = Personas.prompt(prefs.getString("persona", "friend").orEmpty())
+        Thread {
+            val reply = cloudChat("You answer a message for the phone's owner, who is resting. $persona Write one short, warm reply in " +
+                "Sudanese Arabic saying they will answer soon. Never promise anything, never agree to plans, never give any information " +
+                "(where they are, health, money, numbers). Output only the reply.", "${e.who}: ${e.text}", 80)
+                ?.substringAfterLast("</think>")?.trim()?.trim('"') ?: return@Thread
+            val body = "$reply\n— رد تلقائي من زول"
+            main.post {
+                try {
+                    val intent = Intent()
+                    RemoteInput.addResultsToIntent(arrayOf(input), intent, Bundle().apply { putCharSequence(input.resultKey, body) })
+                    action.actionIntent.send(this, 0, intent)
+                    secretaryLog.add("${e.who}: ${e.text.take(80)} ← رديت: $reply")
+                } catch (_: Exception) {}
+            }
+        }.start()
+    }
+
+    private fun secretaryReport(): String {
+        if (secretaryLog.isEmpty()) return t("ما في رسايل جات وإنت مرتاح.", "No messages came while you rested.")
+        val s = t("وإنت مرتاح: ", "While you rested: ") + secretaryLog.takeLast(8).joinToString(". ")
+        secretaryLog.clear()
+        return s
+    }
+
+    // ------------------------------------------------------------------ photos
+
+    fun photosAllowed() = if (Build.VERSION.SDK_INT >= 33) granted(Manifest.permission.READ_MEDIA_IMAGES)
+        else granted(Manifest.permission.READ_EXTERNAL_STORAGE)
+
+    /** The newest photos on the phone: (id, content address), newest first. */
+    private fun recentPhotos(max: Int): List<Pair<Long, Uri>> {
+        val out = ArrayList<Pair<Long, Uri>>()
+        val base = android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        try {
+            contentResolver.query(base, arrayOf(android.provider.MediaStore.Images.Media._ID), null, null,
+                "${android.provider.MediaStore.Images.Media.DATE_ADDED} DESC")?.use { c ->
+                while (c.moveToNext() && out.size < max) { val id = c.getLong(0); out.add(id to android.content.ContentUris.withAppendedId(base, id)) }
+            }
+        } catch (_: Exception) {}
+        return out
+    }
+
+    /** A small picture of a photo, as JPEG base64, for the model that can see. */
+    private fun thumb(uri: Uri): String? = try {
+        val bmp = if (Build.VERSION.SDK_INT >= 29) contentResolver.loadThumbnail(uri, android.util.Size(512, 512), null)
+            else contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null,
+                android.graphics.BitmapFactory.Options().apply { inSampleSize = 8 }) }
+        bmp?.let { jpeg(it) }
+    } catch (_: Exception) { null }
+
+    private fun sendLastPhoto(name: String): String {
+        if (!photosAllowed()) return t("محتاج إذن الصور: افتح ✨ الميزات ← صورك.", "Photo permission needed: Features → photos.")
+        val pkg = whatsappPackage() ?: return t("واتساب غير مثبت.", "WhatsApp is not installed.")
+        val contact = resolveContact(name) ?: return t("لم أجد \"$name\" في جهات الاتصال.", "I cannot find \"$name\".")
+        val (_, uri) = recentPhotos(1).firstOrNull() ?: return t("ما لقيت صور في التلفون.", "No photos on the phone.")
+        Thread {
+            val about = if (aiReady()) thumb(uri)?.let { visionChat("Describe this photo in one short Sudanese Arabic sentence.", "وصف الصورة", it, 80) }
+                ?.substringAfterLast("</think>")?.trim() else null
+            main.post {
+                respond(ask(t((about?.let { "آخر صورة: $it. " } ?: "") + "أرسلها لـ${contact.first}؟ نعم أو لا.", "Send the last photo to ${contact.first}?")) {
+                    try {
+                        startActivity(Intent(Intent.ACTION_SEND).setType("image/*").putExtra(Intent.EXTRA_STREAM, uri)
+                            .putExtra("jid", waNumber(contact.second) + "@s.whatsapp.net").setPackage(pkg)
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
+                        pressSendSoon(4)
+                        t("برسلها في واتساب.", "Sending.")
+                    } catch (e: Exception) { t("ما قدرت: ${e.message}", "Could not send it.") }
+                })
+            }
+        }.start()
+        return t("لحظة، بشوف آخر صورة.", "Looking at the last photo.")
+    }
+
+    private val captionFile by lazy { java.io.File(filesDir, "photo_captions.txt") }
+
+    /** Photos found by what is in them; the newest 200 are looked at, each described once and remembered. */
+    private fun findPhotos(query: String): String {
+        if (!photosAllowed()) return t("محتاج إذن الصور: افتح ✨ الميزات ← صورك.", "Photo permission needed: Features → photos.")
+        if (!aiReady()) return t("البحث في الصور محتاج الذكاء السحابي.", "Photo search needs the smart server.")
+        val terms = Photos.terms(query)
+        if (terms.isEmpty()) return t("قول وريني صور شنو؟", "Photos of what?")
+        Thread {
+            val captions = try { Photos.decode(captionFile.readText()) } catch (_: Exception) { LinkedHashMap() }
+            val photos = recentPhotos(200)
+            val todo = photos.filter { it.first !in captions }.take(40)        // at most 40 new ones each time (the rest next time)
+            if (todo.isNotEmpty()) main.post { log("بشوف ${todo.size} صورة جديدة أول مرة، دي بتاخد شوية…") }
+            for (batch in todo.chunked(4)) {
+                val pics = batch.mapNotNull { p -> thumb(p.second)?.let { p.first to it } }
+                if (pics.isEmpty()) continue
+                val raw = visionChat(Photos.PROMPT, "Describe these ${pics.size} photos.", pics.map { it.second }, 400) ?: continue
+                Photos.parseCaptions(raw, pics.size).forEachIndexed { i, c -> if (c != null) captions[pics[i].first] = c }
+            }
+            try { captionFile.writeText(Photos.encode(captions)) } catch (_: Exception) {}
+            val found = photos.map { it to Photos.score(captions[it.first].orEmpty(), terms) }.filter { it.second > 0 }
+                .sortedByDescending { it.second }.map { it.first.second }.take(30)
+            main.post {
+                if (found.isEmpty()) respond(t("ما لقيت صور فيها «$query»" + (if (photos.size > captions.size) ". لسه في صور ما شفتها، قولها تاني." else "."),
+                    "No photos of $query."))
+                else {
+                    startActivity(Intent(this, PhotosActivity::class.java).putExtra("uris", ArrayList(found.map { it.toString() }))
+                        .putExtra("title", query).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    respond(t("لقيت ${found.size} صورة.", "Found ${found.size} photos."))
+                }
+            }
+        }.start()
+        return t("بفتش في صورك…", "Searching your photos…")
+    }
+
+    // ------------------------------------------------------------------ the TV on the Wi-Fi
+
+    private fun savedTv(): TvRemote.Tv? = prefs.getString("tv", null)?.split('|')?.takeIf { it.size >= 2 }?.let { TvRemote.Tv(it[0], it[1]) }
+
+    private fun findTvs(): List<TvRemote.Tv> {
+        val wifi = applicationContext.getSystemService(WIFI_SERVICE) as android.net.wifi.WifiManager
+        val lock = wifi.createMulticastLock("zol-tv").apply { setReferenceCounted(false) }
+        return try { lock.acquire(); TvRemote.discover() } catch (_: Exception) { emptyList() } finally { try { lock.release() } catch (_: Exception) {} }
+    }
+
+    private fun tvCommand(action: String): String {
+        Thread {
+            var tv = savedTv()
+            if (action == "find" || tv == null) {
+                val tvs = findTvs()
+                tv = tvs.firstOrNull()
+                if (tv == null) {
+                    main.post { respond(t("ما لقيت تلفزيون في الواي فاي. اتأكد إنو التلفزيون شغّال وفي نفس الشبكة. " +
+                        "(زول بيعرف Roku وSamsung وLG؛ تلفزيونات أندرويد استعمل ليها «زول وصّل التلفزيون» بالبلوتوث.)", "No TV found on the Wi-Fi.")) }
+                    return@Thread
+                }
+                prefs.edit().putString("tv", "${tv.brand}|${tv.ip}").apply()
+                if (action == "find") { main.post { respond(t("لقيت تلفزيون ${tv.name}. قول مثلاً: زول علّي التلفزيون.", "Found a ${tv.name} TV.")) }; return@Thread }
+            }
+            val ok = try { tvSend(tv, action) } catch (_: Exception) { false }
+            main.post {
+                if (!ok) {
+                    prefs.edit().remove("tv").apply()                // maybe its address changed: look again next time
+                    respond(t("التلفزيون ما رد. لو أول مرة، اقبل طلب «زول» في شاشة التلفزيون وقول الأمر تاني.", "The TV did not answer; allow Zol on the TV and try again."))
+                } else beep(2)
+            }
+        }.start()
+        return ""
+    }
+
+    private fun tvSend(tv: TvRemote.Tv, action: String): Boolean = when (tv.brand) {
+        "roku" -> TvRemote.roku(tv.ip, action)
+        "samsung" -> {
+            val app = mapOf("youtube" to "111299001912", "netflix" to "11101200001")[action]
+            if (app != null) {
+                val con = URL("http://${tv.ip}:8001/api/v2/applications/$app").openConnection() as HttpURLConnection
+                con.requestMethod = "POST"; con.connectTimeout = 3000; con.readTimeout = 3000
+                (con.responseCode in 200..299).also { con.disconnect() }
+            } else {
+                val key = TvRemote.samsungKey(action) ?: return false
+                val name = android.util.Base64.encodeToString("زول".toByteArray(), android.util.Base64.NO_WRAP)
+                TvRemote.ws(tv.ip, 8001, "/api/v2/channels/samsung.remote.control?name=$name", listOf(TvRemote.samsungMessage(key)), readMs = 1500)
+            }
+        }
+        "lg" -> {
+            val (uri, payload) = TvRemote.lgUri(action) ?: return false
+            val saved = prefs.getString("tv_lg_key", null)
+            TvRemote.ws(tv.ip, 3000, "/", listOf(TvRemote.lgRegister(saved), TvRemote.lgRequest(uri, payload)), readMs = if (saved == null) 30_000 else 2_000) { msg ->
+                TvRemote.lgClientKey(msg)?.let { prefs.edit().putString("tv_lg_key", it).apply() }
+            }
+        }
+        else -> false
+    }
+
+    // ------------------------------------------------------------------ learning from a correction
+
+    private var lastSaid: Pair<String, Long>? = null
+    private var correctFrom: Pair<String, Long>? = null
+
+    /** "لا قصدي افتح الواتساب": the sentence before means this from now on; and it is done now. */
+    private fun correctLast(meaning: String): String {
+        val prev = correctFrom?.takeIf { SystemClock.elapsedRealtime() - it.second < 90_000 }?.first
+        correctFrom = null
+        if (Commands.parse(meaning) == null) return t("ما فهمت «$meaning» برضو. قولها بطريقة تانية.", "I don't understand that either.")
+        if (prev != null && Commands.normalize(prev).trim() != Commands.normalize(meaning).trim()) {
+            val (phrases, n) = Dialects.merge(prefs.getString("phrases", "").orEmpty(), mapOf(prev to meaning)) { Commands.normalize(it).trim() }
+            val saved = if (n == 0) {                         // the sentence was taught before: the new meaning replaces it
+                prefs.getString("phrases", "").orEmpty().lines().filter { it.isNotBlank() &&
+                    Commands.normalize(it.substringBefore('=')).trim() != Commands.normalize(prev).trim() }.plus("$prev=$meaning").joinToString("\n")
+            } else phrases
+            prefs.edit().putString("phrases", saved).apply()
+            Commands.userPhrases = Commands.parsePhrases(saved)
+            log("اتعلمت: «$prev» يعني «$meaning».")
+        }
+        main.post { handleText(meaning) }
+        return ""
+    }
+
+    // ------------------------------------------------------------------ the headset button
+
+    private val clearHeadsetMic = Runnable {
+        if (Build.VERSION.SDK_INT >= 31) try { (getSystemService(AUDIO_SERVICE) as AudioManager).clearCommunicationDevice() } catch (_: Exception) {}
+    }
+
+    /** A press on the headset: Zol listens for ten seconds without the wake word, through the headset's microphone. */
+    private fun pushToTalk() {
+        markActive()
+        if (!granted(Manifest.permission.RECORD_AUDIO)) return
+        val audio = getSystemService(AUDIO_SERVICE) as AudioManager
+        if (Build.VERSION.SDK_INT >= 31) try {
+            audio.availableCommunicationDevices.firstOrNull {
+                it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                    it.type == android.media.AudioDeviceInfo.TYPE_USB_HEADSET || it.type == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET
+            }?.let { audio.setCommunicationDevice(it) }
+        } catch (_: Exception) {}
+        main.removeCallbacks(clearHeadsetMic)
+        main.postDelayed(clearHeadsetMic, 15_000)
+        awakeUntil = SystemClock.elapsedRealtime() + 10_000
+        beep(1)
+        if (!listening) startListening(false) else { ear?.stop(); ear = null; resume(150) }   // the new microphone
+    }
+
+    // ------------------------------------------------------------------ the person's voice only
+
+    val voiceprint by lazy { Voiceprint(this) }
+    private var otherVoiceLogAt = 0L
+
+    private fun otherVoice(text: String) {
+        val now = SystemClock.elapsedRealtime()
+        if (Commands.stripWake(text) == null || now - otherVoiceLogAt < 60_000) return
+        otherVoiceLogAt = now
+        log("سمعت «${text.take(40)}» بصوت ما صوتك، فما نفذتو. (قول «زول اسمع كل الناس» لو عايز أسمع أي زول)")
+    }
+
+    private fun voiceprintCommand(what: String): String = when (what) {
+        "off" -> { prefs.edit().putBoolean("voiceprint_on", false).apply(); t("بسمع أي زول هسع.", "Listening to anyone now.") }
+        "on" -> if (voiceprint.enrolled() == null) learnVoice() else {
+            prefs.edit().putBoolean("voiceprint_on", true).apply(); t("بسمع صوتك إنت بس.", "Only your voice now.") }
+        else -> learnVoice()
+    }
+
+    /** Three sentences, after a beep each; their voice is kept as the person's. */
+    private fun learnVoice(): String {
+        if (!granted(Manifest.permission.RECORD_AUDIO)) return t("لا يوجد إذن للميكروفون.", "Microphone permission missing.")
+        if (!voiceprint.ready()) {
+            voiceprint.download { error ->
+                main.post { if (error == null) respond(learnVoice()) else log("ما كمل تنزيل بصمة الصوت: $error") }
+            }
+            return t("بنزّل بصمة الصوت (28 ميقا) أول مرة. التقدم ظاهر فوق.", "Downloading the voice model first.")
+        }
+        val wasListening = listening
+        if (listening) stopListening(false)
+        say(t("عشان أعرف صوتك: بعد كل صفارة قول جملة عادية، زي: زول كم الساعة. حتسمع تلاتة صفارات.",
+            "To learn your voice: after each of three beeps, say a sentence."))
+        Thread {
+            SystemClock.sleep(7_000)
+            val voices = ArrayList<FloatArray>()
+            repeat(3) {
+                main.post { beep(1) }
+                SystemClock.sleep(400)
+                val (_, pcm) = recordFor(prefs.getInt("ear_source", MicSources.CALL), 3_500)
+                voiceprint.embed(pcm)?.let { voices.add(it) }
+                SystemClock.sleep(600)
+            }
+            main.post {
+                beep(2)
+                val avg = Speaker.average(voices)
+                when {
+                    voices.size < 3 || avg == null -> respond(t("ما قدرت أسمع صوتك كويس. جرّب تاني في مكان هادي.", "Could not hear you well; try again."))
+                    !Speaker.consistent(voices) -> respond(t("الجمل التلاتة ما طلعت بنفس الصوت (يمكن في زول اتكلم معاك). جرّب تاني براك.",
+                        "The three did not sound like one voice; try again alone."))
+                    else -> { voiceprint.save(avg); respond(t("عرفت صوتك. هسع بنفذ أوامرك إنت بس، إلا الطوارئ من أي زول.",
+                        "I know your voice now; only you can give commands (anyone for emergencies).")) }
+                }
+                if (wasListening) main.postDelayed({ startListening(false) }, 3_000)
+            }
+        }.start()
+        return ""
     }
 
     private var cloudFailures = 0
@@ -1429,6 +1808,21 @@ class JarvisService : AccessibilityService() {
 
     private fun localAiReady() = prefs.getBoolean("llm_on", false) && localLlm.available()
 
+    /** Download the thinking model (about 1.5 GB) so Zol understands harder sentences without internet. */
+    private fun downloadBrain(): String {
+        if (localLlm.available()) { prefs.edit().putBoolean("llm_on", true).apply(); return t("عقل زول بدون نت موجود وشغّال.", "The offline brain is ready.") }
+        if (Downloads.get("brain") != null) return t("التنزيل شغّال.", "Downloading.")
+        OfflinePack.downloadBrain(localLlm.file()) { error ->
+            main.post {
+                if (error == null) {
+                    prefs.edit().putBoolean("llm_on", true).putString("llm_name", "qwen").apply()
+                    respond(t("عقل زول بدون نت جاهز. لو النت قطع، بفهم الأوامر الصعبة براي.", "The offline brain is ready."))
+                } else log("ما كمل تنزيل العقل: $error")
+            }
+        }
+        return t("بنزّل عقل زول بدون نت (حوالي 1.5 قيقا، أحسن بالواي فاي). التقدم ظاهر فوق.", "Downloading the offline brain (about 1.5 GB).")
+    }
+
     private fun askLocal(text: String) {
         log("أفكر...")
         val system = aiPrompt()
@@ -1749,7 +2143,7 @@ class JarvisService : AccessibilityService() {
             main.post {
                 val who = from?.let { t("رسالة صوتية من $it", "Voice message from $it") } ?: t("الرسالة الصوتية", "The voice message")
                 if (text.isNullOrBlank()) respond(t("$who: ما قدرت أفهم الكلام فيها.", "$who: I could not make out the words."))
-                else announce("$who: «$text»", true)
+                else { announce("$who: «$text»", true); noteLife("com.whatsapp", from ?: "رسالة صوتية", "🎤 $text", System.currentTimeMillis()) }
             }
         }.start()
         return if (from == null) t("لحظة، بقرا الرسالة الصوتية.", "One moment.") else ""
@@ -2776,6 +3170,53 @@ class JarvisService : AccessibilityService() {
         return t("لحظة، بشوف الشاشة.", "One moment, looking at the screen.")
     }
 
+    /** A picture of the screen as JPEG base64 (null when Android refuses), for the agent. */
+    private fun screenPicture(done: (String?) -> Unit) {
+        if (Build.VERSION.SDK_INT < 30) { done(null); return }
+        try {
+            takeScreenshot(android.view.Display.DEFAULT_DISPLAY, mainExecutor, object : TakeScreenshotCallback {
+                override fun onSuccess(shot: ScreenshotResult) {
+                    val bmp = try {
+                        android.graphics.Bitmap.wrapHardwareBuffer(shot.hardwareBuffer, shot.colorSpace)
+                            ?.let { hw -> hw.copy(android.graphics.Bitmap.Config.ARGB_8888, false).also { hw.recycle() } }
+                    } catch (_: Exception) { null } finally { try { shot.hardwareBuffer.close() } catch (_: Exception) {} }
+                    done(bmp?.let { jpeg(it) })
+                }
+                override fun onFailure(code: Int) = done(null)
+            })
+        } catch (_: Exception) { done(null) }
+    }
+
+    /** A chat message with a picture, to the model that can see. Off the main thread. */
+    private fun visionChat(system: String, user: String, image: String, maxTokens: Int): String? = visionChat(system, user, listOf(image), maxTokens)
+
+    private fun visionChat(system: String, user: String, images: List<String>, maxTokens: Int): String? {
+        var base = prefs.getString("ai_url", "").orEmpty().trim().trimEnd('/')
+        if (!base.startsWith("http")) base = "http://$base"
+        val key = prefs.getString("ai_key", "").orEmpty().trim()
+        val model = visionModel(base, key) ?: return null
+        return try {
+            val body = JSONObject().put("model", model).put("temperature", 0.2).put("max_tokens", maxTokens)
+                .put("messages", JSONArray()
+                    .put(JSONObject().put("role", "system").put("content", system))
+                    .put(JSONObject().put("role", "user").put("content", JSONArray().apply {
+                        put(JSONObject().put("type", "text").put("text", user))
+                        images.forEach { put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", "data:image/jpeg;base64,$it"))) }
+                    })))
+            if (base.contains("generativelanguage.googleapis.com")) body.put("reasoning_effort", "low")
+            val con = URL("$base/chat/completions").openConnection() as HttpURLConnection
+            con.requestMethod = "POST"; con.doOutput = true
+            con.connectTimeout = 8000; con.readTimeout = 45000
+            con.setRequestProperty("Content-Type", "application/json")
+            if (key.isNotEmpty()) con.setRequestProperty("Authorization", "Bearer $key")
+            con.outputStream.use { it.write(body.toString().toByteArray()) }
+            if (con.responseCode !in 200..299) { con.disconnect(); return null }
+            val raw = con.inputStream.bufferedReader().use { it.readText() }
+            con.disconnect()
+            JSONObject(raw).getJSONArray("choices").getJSONObject(0).getJSONObject("message").optString("content")
+        } catch (_: Exception) { null }
+    }
+
     /** At most 1280 pixels on the long side, as JPEG in base64: small enough to send quickly. */
     private fun jpeg(bitmap: android.graphics.Bitmap): String {
         val scale = minOf(1f, 1280f / maxOf(bitmap.width, bitmap.height))
@@ -3146,6 +3587,17 @@ class JarvisService : AccessibilityService() {
         val items = agentObserve()
         val app = rootInActiveWindow?.packageName?.toString().orEmpty()
         val obs = Agent.observation(app, agentGoal, items, agentDone, agentStep)
+        // few readable elements (a picture, a game, a web page): the agent looks at the screen itself
+        if (items.size < 6 && Build.VERSION.SDK_INT >= 30 && prefs.getBoolean("agent_vision", true)) {
+            screenPicture { image ->
+                Thread {
+                    val raw = if (image != null) visionChat(Agent.SYSTEM + "\n" + Agent.PICTURE, obs, image, 200) ?: cloudChat(Agent.SYSTEM, obs, 200)
+                        else cloudChat(Agent.SYSTEM, obs, 200)
+                    main.post { agentAct(raw) }
+                }.start()
+            }
+            return
+        }
         Thread {
             val raw = cloudChat(Agent.SYSTEM, obs, 200)
             main.post { agentAct(raw) }
@@ -3183,6 +3635,22 @@ class JarvisService : AccessibilityService() {
                 agentDone.add("typed text"); agentNext()
             }
             "scroll" -> { swipe(step.direction != "up"); agentDone.add("scrolled ${step.direction}"); agentNext() }
+            "tap_xy" -> {
+                if (Agent.isRisky(step.text) || step.text.isBlank()) {      // sending, paying, deleting: only after a yes
+                    agentOn = false
+                    respond(ask(t("الخطوة الجاية: أضغط «${step.text.ifBlank { "نقطة في الشاشة" }}». أواصل؟ نعم أو لا.", "Next: press ${step.text}. Go on?"),
+                        onNo = { stopAgent(t("وقفت.", "Stopped.")); "" }) {
+                        val dm = resources.displayMetrics
+                        tapAt(step.x * dm.widthPixels / 1000f, step.y * dm.heightPixels / 1000f)
+                        agentDone.add("tapped ${step.text}"); agentOn = true; agentNext(); ""
+                    })
+                    return
+                }
+                val dm = resources.displayMetrics
+                tapAt(step.x * dm.widthPixels / 1000f, step.y * dm.heightPixels / 1000f)
+                agentDone.add("tapped the picture at ${step.x},${step.y}")
+                agentNext()
+            }
             "back" -> { performGlobalAction(GLOBAL_ACTION_BACK); agentDone.add("back"); agentNext() }
             "home" -> { performGlobalAction(GLOBAL_ACTION_HOME); agentDone.add("home"); agentNext() }
             "open" -> { val r = openApp(step.text); agentDone.add("opened ${step.text}: $r"); agentNext(2500) }
@@ -3388,6 +3856,9 @@ class JarvisService : AccessibilityService() {
         Commands.userPhrases = Commands.parsePhrases(prefs.getString("phrases", "").orEmpty())
         Commands.homeDevices = devices().keys
         Commands.macroNames = macros().keys
+        val prevSaid = lastSaid
+        if (Commands.parse(text) !is Cmd.Correct) lastSaid = text.trim() to SystemClock.elapsedRealtime()
+        else correctFrom = prevSaid
         Commands.setWake(prefs.getString("wake_word", "زول"))
         usePrayerPlace()
         if (text.isNotBlank()) prefs.edit().putBoolean("tested", true).apply()
@@ -3432,6 +3903,7 @@ class JarvisService : AccessibilityService() {
                 findScene(text, exact = true) != null -> { beep(2); respond(runScene(text)) }
                 commands.isNotEmpty() -> runAll(commands, 0)
                 findScene(text) != null -> { beep(2); respond(runScene(text)) }
+                aiReady() && !online() && localAiReady() -> askLocal(text)      // no internet: the brain on the phone
                 aiReady() -> askAi(text)
                 else -> fallback(text)
             }
@@ -4318,8 +4790,23 @@ class JarvisService : AccessibilityService() {
         prefs.getString("ai_model", "").orEmpty().isNotBlank()
 
     /** The fixed instructions plus what is useful to know right now: facts the person told Zol, devices, current app. */
+    /** The phone's Arabic voices, one after the other (each phone has its own). */
+    private fun nextVoice(): String {
+        val engine = tts ?: return t("صوت النطق ما جاهز.", "Speech is not ready.")
+        val voices = try { engine.voices.orEmpty().filter { it.locale.language == "ar" && !it.isNetworkConnectionRequired }.sortedBy { it.name } }
+            catch (_: Exception) { emptyList() }
+        if (voices.size < 2) return t("تلفونك فيهو صوت عربي واحد بس. تقدر تنزّل أصوات تانية من إعدادات تحويل النص لكلام.",
+            "This phone has one Arabic voice only.")
+        val now = prefs.getString("tts_voice", null)
+        val next = voices[(voices.indexOfFirst { it.name == now } + 1) % voices.size]
+        prefs.edit().putString("tts_voice", next.name).apply()
+        try { engine.voice = next } catch (_: Exception) {}
+        return t("دا صوت ${voices.indexOf(next) + 1} من ${voices.size}. قول «غيّر الصوت» تاني للجاي.", "Voice ${voices.indexOf(next) + 1} of ${voices.size}.")
+    }
+
     private fun aiPrompt(): String = buildString {
         append(AI_PROMPT)
+        append("\nPersonality: ").append(Personas.prompt(prefs.getString("persona", "friend").orEmpty()))
         val facts = prefs.getString("memory", "").orEmpty().lines().filter { it.isNotBlank() }.take(15)
         if (facts.isNotEmpty()) append("\nThings the user told you to remember: ").append(facts.joinToString("; "))
         val names = devices().keys
@@ -4645,6 +5132,25 @@ class JarvisService : AccessibilityService() {
             is Cmd.Pc -> pcCommand(c)
             is Cmd.Eyes -> if (c.on) startEyes() else stopEyes()
             Cmd.StopAll -> stopEverything()
+            is Cmd.VoicePrint -> voiceprintCommand(c.what)
+            is Cmd.Correct -> correctLast(c.text)
+            Cmd.OfflineBrain -> downloadBrain()
+            is Cmd.AskMemory -> askMemory(c.question)
+            is Cmd.Secretary -> { prefs.edit().putBoolean("secretary_on", c.on).apply()
+                if (c.on) t("حاضر، برد على الرسايل بدلك بكلام قصير ومهذب، وبقول ليهم إنك حترد بعدين. قول «زول شنو الحصل» عشان أحكي ليك.",
+                    "I will answer messages for you.") else t("وقفت الرد بدلك.", "Stopped answering for you.") }
+            Cmd.SecretaryReport -> secretaryReport()
+            is Cmd.Persona -> if (c.id.isEmpty()) t("أقدر أتكلم: ", "I can talk as: ") + Personas.ALL.joinToString("، ") { it.name } +
+                t(". قول مثلاً: زول اتكلم زي الصاحب.", ". Say: talk like a friend.") else {
+                val p = Personas.get(c.id)
+                prefs.edit().putString("persona", p.id).putFloat("tts_rate", p.rate).putFloat("tts_pitch", p.pitch).apply()
+                tts?.setSpeechRate(p.rate); tts?.setPitch(p.pitch)
+                t("حاضر، بقيت ${p.name}.", "OK: ${p.name}.")
+            }
+            Cmd.NextVoice -> nextVoice()
+            is Cmd.SendPhoto -> sendLastPhoto(c.name)
+            is Cmd.FindPhotos -> findPhotos(c.query)
+            is Cmd.Tv -> tvCommand(c.action)
             Cmd.VoiceBank -> {
                 startActivity(Intent(this, VoiceBankActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 t("سجّل الجمل البتقولها كتير بصوتك.", "Record your own sentences.")

@@ -135,6 +135,11 @@ class FeaturesActivity : AppCompatActivity() {
                     ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1)
                 else if (service.listening) service.stopListening() else service.startListening()
             }
+            "photos" -> {
+                val perm = if (android.os.Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES else Manifest.permission.READ_EXTERNAL_STORAGE
+                if (ContextCompat.checkSelfPermission(this, perm) != PackageManager.PERMISSION_GRANTED) ActivityCompat.requestPermissions(this, arrayOf(perm), 4)
+                else Toast.makeText(this, "قول: زول وريني صور العيد، أو: زول ارسل آخر صورة لأمي", Toast.LENGTH_LONG).show()
+            }
             "pc" -> {
                 val need = if (android.os.Build.VERSION.SDK_INT >= 31) arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_ADVERTISE)
                     else emptyArray()

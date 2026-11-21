@@ -52,6 +52,7 @@ class JarvisNotifications : NotificationListenerService() {
         if (RepeatFilter.isStatus(title) || !repeats.allow(sbn.packageName + "/" + title, now)) return
         val who = title.ifEmpty { "رسالة" }
         service.noteNotification("$who: $line")
+        if (!Fun.isVoiceNote(line)) service.noteLife(sbn.packageName, who, text.take(600), sbn.postTime)
         val action = n.actions?.firstOrNull { it.remoteInputs?.isNotEmpty() == true }
         service.noteReplyTarget(who, action, action?.remoteInputs?.firstOrNull())
         // a WhatsApp voice message: written out and read, instead of "🎤 رسالة صوتية (0:12)"

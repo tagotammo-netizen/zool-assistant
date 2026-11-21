@@ -7,7 +7,8 @@ package org.jarvis.assistant
 object Agent {
 
     data class Item(val n: Int, val kind: String, val label: String)
-    data class Step(val action: String, val n: Int = 0, val text: String = "", val direction: String = "down")
+    data class Step(val action: String, val n: Int = 0, val text: String = "", val direction: String = "down",
+                    val x: Int = -1, val y: Int = -1)
     data class Reply(val command: String, val reply: String, val agent: String)
 
     const val MAX_STEPS = 10
@@ -37,6 +38,11 @@ object Agent {
     }
 
     /** What the model reads each turn. */
+    /** Added when a picture of the screen goes with the list (a screen with few readable elements). */
+    const val PICTURE = "A screenshot of the screen is attached. If what you need is not in the list, you may also answer " +
+        "{\"action\":\"tap_xy\",\"x\":<0-1000>,\"y\":<0-1000>,\"text\":\"<what is there>\"} to press a point of the picture " +
+        "(0,0 is the top left, 1000,1000 the bottom right)."
+
     fun observation(app: String, goal: String, items: List<Item>, done: List<String>, step: Int): String = buildString {
         appendLine("Goal: $goal")
         appendLine("Step $step of $MAX_STEPS. Foreground app: $app")
@@ -95,10 +101,13 @@ object Agent {
     fun parseStep(raw: String): Step? {
         val json = flatJson(raw) ?: return null
         val action = json["action"].orEmpty().trim().lowercase()
-        if (action !in setOf("tap", "type", "scroll", "open", "back", "home", "wait", "say", "done")) return null
+        if (action !in setOf("tap", "type", "scroll", "open", "back", "home", "wait", "say", "done", "tap_xy")) return null
         val n = json["n"]?.trim()?.toDoubleOrNull()?.toInt() ?: 0
         if ((action == "tap" || action == "type") && n < 1) return null
-        return Step(action, n, json["text"].orEmpty().trim(), json["direction"].orEmpty().ifBlank { "down" }.lowercase())
+        val x = json["x"]?.trim()?.toDoubleOrNull()?.toInt() ?: -1
+        val y = json["y"]?.trim()?.toDoubleOrNull()?.toInt() ?: -1
+        if (action == "tap_xy" && (x !in 0..1000 || y !in 0..1000)) return null
+        return Step(action, n, json["text"].orEmpty().trim(), json["direction"].orEmpty().ifBlank { "down" }.lowercase(), x, y)
     }
 
     /** The normal "smart mode" answer: {"command": "...", "reply": "...", "agent": "..."} */

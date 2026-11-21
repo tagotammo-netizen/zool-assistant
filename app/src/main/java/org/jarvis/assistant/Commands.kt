@@ -75,6 +75,17 @@ sealed class Cmd {
     data class Pc(val what: String, val text: String = "") : Cmd()   // the phone as a computer's mouse and keyboard
     data class Eyes(val on: Boolean) : Cmd()                 // winks drive the switch scanning
     object StopAll : Cmd()                                   // every feature that is running stops
+    data class VoicePrint(val what: String) : Cmd()          // learn, on, off: only the person's voice gives commands
+    data class Correct(val text: String) : Cmd()             // "لا قصدي …": what the last sentence meant
+    object OfflineBrain : Cmd()
+    data class AskMemory(val question: String) : Cmd()       // "أحمد قال لي شنو امبارح؟"
+    data class Secretary(val on: Boolean) : Cmd()             // answer messages for the person while they rest
+    object SecretaryReport : Cmd()
+    data class Persona(val id: String) : Cmd()               // how Zol talks; empty: say the choices
+    object NextVoice : Cmd()                                 // the next Arabic voice of the phone
+    data class SendPhoto(val name: String) : Cmd()           // the newest photo, described, then sent on WhatsApp
+    data class FindPhotos(val query: String) : Cmd()
+    data class Tv(val action: String) : Cmd()                // the TV on the Wi-Fi: power, volup, chup, youtube, find…
     data class Photo(val seconds: Int) : Cmd()
     data class OpenChat(val name: String) : Cmd()
     data class Dictation(val start: Boolean) : Cmd()
@@ -801,6 +812,26 @@ object Commands {
 
         rest(w, "اكتب في الكمبيوتر", "اكتب للكمبيوتر", "اكتب في التلفزيون", "type on the computer")?.let { r ->
             if (r.isNotBlank()) return Cmd.Pc("type", r)
+        }
+        rest(w, "اتكلم زي", "اتكلم بطريقه", "خليك", "بقي", "talk like")?.let { r -> Personas.find(r)?.let { return Cmd.Persona(it.id) } }
+        if (t in setOf("شخصيات زول", "غير شخصيتك", "غير طريقه كلامك", "change personality")) return Cmd.Persona("")
+        if (t in setOf("غير الصوت", "غير صوتك", "صوت تاني", "change voice", "another voice")) return Cmd.NextVoice
+        if (t in setOf("رد بدالي", "رد بالنيابه عني", "شغل السكرتير", "وضع السكرتير", "secretary mode")) return Cmd.Secretary(true)
+        if (t in setOf("وقف السكرتير", "اقفل السكرتير", "خلاص السكرتير", "stop secretary")) return Cmd.Secretary(false)
+        if (t in setOf("شنو الحصل", "حصل شنو", "شنو الرديت عليهو", "ملخص السكرتير", "what happened")) return Cmd.SecretaryReport
+        TvRemote.action(t)?.let { return Cmd.Tv(it) }
+        rest(w, "ارسل اخر صوره", "رسل اخر صوره", "ارسل الصوره الاخيره", "رسل الصوره الاخيره", "ابعت اخر صوره", "ارسل اخر صوره ل",
+            "send the last photo to", "send my last photo to")?.let { r -> Fun.voiceTarget(r).takeIf { it.isNotBlank() }?.let { return Cmd.SendPhoto(trimTail(it)) } }
+        rest(w, "وريني صور", "ورني صور", "افتح صور", "افتح الصور", "لقي لي صور", "فتش في الصور عن", "وريني الصور", "وين صوره", "وين الصوره", "show me photos of",
+            "find photos of", "show me pictures of")?.let { r -> if (r.isNotBlank()) return Cmd.FindPhotos(r) }
+        if (LifeLog.isQuestion(t)) return Cmd.AskMemory(t)
+        rest(w, "اقرا رسايل", "اقرا لي رسايل", "اقرا رسائل", "رسايل")?.let { r -> if (r.isNotBlank() && words(r).size <= 3) return Cmd.AskMemory("رسايل $r") }
+        if (t in setOf("نزل العقل بدون نت", "نزل الذكاء بدون نت", "حمل العقل بدون نت", "نزل عقل زول", "download offline brain")) return Cmd.OfflineBrain
+        if (t in setOf("اتعلم صوتي", "اعرف صوتي", "بصمه صوتي", "سجل بصمه صوتي", "سجل صوتي عشان تعرفني", "learn my voice")) return Cmd.VoicePrint("learn")
+        if (t in setOf("اسمع اي زول", "اي زول", "اي واحد", "كل الناس", "اسمع كل الناس", "وقف بصمه الصوت", "اقفل بصمه الصوت", "listen to anyone")) return Cmd.VoicePrint("off")
+        if (t in setOf("اسمع صوتي بس", "شغل بصمه الصوت", "only my voice")) return Cmd.VoicePrint("on")
+        rest(w, "لا قصدي", "لا قصدت", "لا انا قلت", "غلط قصدي", "لا لا قصدي", "قصدي", "no i meant", "i meant")?.let { r ->
+            if (r.isNotBlank()) return Cmd.Correct(r)
         }
         if (t in setOf("وقف كل حاجه", "وقف كل شي", "اقفل كل حاجه", "اقفل كل الميزات", "وقف كل الميزات", "وقف الكل", "اقفل الكل",
                 "stop everything", "stop all")) return Cmd.StopAll

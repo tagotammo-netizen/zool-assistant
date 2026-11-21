@@ -65,8 +65,40 @@ object OfflinePack {
         }.start()
     }
 
+    /** Where the small thinking model comes from (a public model in MediaPipe's ".task" form). */
+    const val BRAIN_REPO = "litert-community/Qwen2.5-1.5B-Instruct"
+
+    /**
+     * Of a model repository's files (Hugging Face's list: name and size), the ".task" file to download: the
+     * smallest one that is a whole model, so it fits phones with little space.
+     */
+    fun pickTask(files: List<Pair<String, Long>>): String? = files
+        .filter { it.first.endsWith(".task") && it.second > 100_000_000 }
+        .minByOrNull { it.second }?.first
+
+    /** The thinking model for when there is no internet: the right file found from the repository's list, then fetched. */
+    fun downloadBrain(dest: File, done: (String?) -> Unit) {
+        val job = Downloads.start("brain", "عقل زول بدون نت")
+        Thread {
+            var error: String? = null
+            try {
+                val con = URL("https://huggingface.co/api/models/$BRAIN_REPO?blobs=true").openConnection() as HttpURLConnection
+                con.connectTimeout = 15_000; con.readTimeout = 30_000
+                val raw = con.inputStream.bufferedReader().use { it.readText() }
+                con.disconnect()
+                val arr = org.json.JSONObject(raw).optJSONArray("siblings")
+                val files = (0 until (arr?.length() ?: 0)).map { i -> arr!!.getJSONObject(i).let { it.optString("rfilename") to it.optLong("size") } }
+                val name = pickTask(files) ?: throw java.io.IOException("ما لقيت ملف النموذج")
+                job.items = 1; job.item = 1
+                error = fetch("https://huggingface.co/$BRAIN_REPO/resolve/main/$name", dest, job)
+            } catch (e: Exception) { error = "ما قدرت أوصل للنموذج (${e.message})" }
+            Downloads.finish(job, if (error == null) Downloads.State.DONE else Downloads.State.FAILED, error)
+            done(error)
+        }.start()
+    }
+
     /** One file, carrying on from where a broken download stopped. Null when it worked. */
-    private fun fetch(address: String, target: File, job: Downloads.Job): String? {
+    fun fetch(address: String, target: File, job: Downloads.Job): String? {
         val part = File(target.path + ".part")
         return try {
             var url = URL(address)

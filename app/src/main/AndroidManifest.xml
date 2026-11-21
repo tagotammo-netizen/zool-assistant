@@ -25,6 +25,10 @@
         tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
+    <!-- finding and sending photos by voice -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <!-- finding the TV on the Wi-Fi -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- the phone as a Bluetooth mouse and keyboard for a computer or a TV -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
@@ -93,6 +97,10 @@
             android:name=".FeaturesActivity"
             android:exported="false"
             android:label="ميزات زول" />
+        <activity
+            android:name=".PhotosActivity"
+            android:exported="false"
+            android:label="صورك" />
         <activity
             android:name=".VoiceBankActivity"
             android:exported="false"
