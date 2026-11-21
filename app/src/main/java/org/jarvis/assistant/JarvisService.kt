@@ -96,6 +96,8 @@ class JarvisService : AccessibilityService() {
         var onLog: ((String) -> Unit)? = null
         val history = ArrayList<String>()
         private const val CHANNEL = "jarvis_listening"
+        /** Zol's own screens (captions…) close when "stop everything" is pressed. */
+        const val ACTION_CLOSE_SCREENS = "org.jarvis.assistant.CLOSE_SCREENS"
 
         /** Placeholders that chat apps report as if they were typed text (already normalised). */
         private val PLACEHOLDERS = setOf("مراسله", "رساله", "اكتب رساله", "اكتب رسالتك", "الرساله", "رساله نصيه", "بحث", "ابحث",
@@ -199,6 +201,7 @@ class JarvisService : AccessibilityService() {
         initVoice()
         Thread { OfflinePack.copyDetector(this, whisper.dir()) }.start()
         main.postDelayed(habitTick, 60_000)
+        main.postDelayed(stopButtonTick, 3_000)
         log("الخدمة تعمل.")
         ProactiveReceiver.schedule(this)
         try { registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) } catch (_: Exception) {}
@@ -2129,6 +2132,98 @@ class JarvisService : AccessibilityService() {
             if (f.tap) { link.click(1); beep(2) }
             true
         }
+    }
+
+    // ------------------------------------------------------------------ stop everything
+
+    /** What is running now that the person might want to stop (for the stop button and its label). */
+    fun running(): List<String> = buildList {
+        if (game != null) add("اللعب")
+        if (translating) add("الترجمة")
+        if (beads != null) add("المسبحة")
+        if (lesson != null) add("درس الإنجليزي")
+        if (learning != null) add("التعليم")
+        if (findPlayer != null) add("الصفارة")
+        if (sleepEnd != 0L) add("مؤقت النوم")
+        if (dimView != null) add("التغميق")
+        if (awakeView != null) add("الشاشة شغالة")
+        if (eyeGestures != null) add("التحكم بالعيون")
+        if (pc != null) add("الكمبيوتر")
+        if (head?.running == true && eyeGestures == null) add("التحكم بالرأس")
+        if (switches?.running == true && !eyesStartedSwitches) add("التنقل بالمفاتيح")
+        if (quran?.playing == true) add("القرآن")
+        if (board?.shown == true) add("لوحة الكلام")
+        if (recorder != null) add("التسجيل")
+        if (captionListeners.isNotEmpty()) add("الكلام مكتوب")
+        if (agentGoal.isNotEmpty()) add("المساعد")
+    }
+
+    /** Every feature stops and every screen of Zol's over the phone goes away; listening stays as it was. */
+    fun stopEverything(): String {
+        val was = running()
+        game = null; main.removeCallbacks(gameTimeout)
+        translating = false
+        if (beads != null) { beads = null; main.removeCallbacks(beadsTimeout); hideBeads() }
+        lesson = null; main.removeCallbacks(lessonTimeout)
+        learning = null; main.removeCallbacks(learnTimeout)
+        stopFindPhone()
+        cancelSleep(false)
+        dimScreen(false)
+        keepScreenOn(false)
+        if (eyeGestures != null) stopEyes()
+        if (pc != null) { head?.remote = null; pc?.stop(); pc = null }
+        if (head?.running == true) stopHead()
+        if (switches?.running == true) { switches?.stop(); switches = null; prefs.edit().putString("switch_mode", "off").apply() }
+        quran?.stop()
+        clipPlayer?.let { try { it.stop(); it.release() } catch (_: Exception) {} }
+        clipPlayer = null
+        if (board?.shown == true) hideBoard()
+        recorder?.let { try { it.stop() } catch (_: Exception) {}; try { it.release() } catch (_: Exception) {} }
+        recorder = null; recordFile?.delete()
+        if (agentGoal.isNotEmpty()) stopAgent(t("وقفت.", "Stopped."))
+        pending = null
+        tts?.stop()
+        sendBroadcast(Intent(ACTION_CLOSE_SCREENS).setPackage(packageName))     // the captions screen and the like
+        refreshStopButton()
+        return if (was.isEmpty()) t("ما في حاجة شغالة.", "Nothing was running.")
+        else t("وقفت كل حاجة: ", "Stopped: ") + was.joinToString("، ") + "."
+    }
+
+    private var stopButton: TextView? = null
+    private val stopButtonTick = object : Runnable {
+        override fun run() { refreshStopButton(); main.postDelayed(this, 1_500) }
+    }
+
+    /**
+     * A red button over the screen while any feature runs (a game, the beads, head or eye control, the timer…):
+     * a tap stops them all, so nothing stays stuck on the screen. It goes away by itself when nothing runs.
+     */
+    fun refreshStopButton() {
+        val names = running()
+        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        if (names.isEmpty() || !prefs.getBoolean("stop_button", true)) {
+            stopButton?.let { try { wm.removeView(it) } catch (_: Exception) {} }
+            stopButton = null
+            return
+        }
+        val label = "⏹ وقّف " + (if (names.size == 1) names[0] else "الكل (${names.size})")
+        stopButton?.let { it.text = label; return }
+        val d = resources.displayMetrics.density
+        val v = TextView(this).apply {
+            text = label
+            textSize = 17f
+            setTextColor(Color.WHITE)
+            setPadding((16 * d).toInt(), (10 * d).toInt(), (16 * d).toInt(), (10 * d).toInt())
+            background = GradientDrawable().apply { cornerRadius = 24 * d; setColor(Color.argb(235, 190, 30, 30)) }
+            contentDescription = "وقّف كل الميزات الشغالة"
+            setOnClickListener { respond(stopEverything()) }
+        }
+        val lp = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT)
+        lp.gravity = Gravity.BOTTOM or Gravity.START
+        lp.x = (12 * d).toInt()
+        lp.y = (90 * d).toInt()
+        try { wm.addView(v, lp); stopButton = v } catch (_: Exception) {}
     }
 
     // ------------------------------------------------------------------ control with the eyes
@@ -4233,6 +4328,18 @@ class JarvisService : AccessibilityService() {
     }
 
     /** One blocking request to the OpenAI-compatible server in settings (Gemini, Groq, Ollama...). Call it off the main thread. */
+    /**
+     * Models that think before answering (gpt-oss, qwen3 on Groq) take seconds to do it: a command needs no long
+     * thought, so they are asked to think little and not send their thinking.
+     */
+    private fun thinkLess(body: JSONObject) {
+        val m = body.optString("model").lowercase()
+        when {
+            m.contains("gpt-oss") -> { body.put("reasoning_effort", "low"); body.put("include_reasoning", false) }
+            m.contains("qwen3") -> { body.put("reasoning_effort", "none"); body.put("include_reasoning", false) }
+        }
+    }
+
     private fun cloudChat(system: String, user: String, maxTokens: Int = 300, retried: Boolean = false): String? {
         var base = prefs.getString("ai_url", "").orEmpty().trim().trimEnd('/')
         if (base.isEmpty()) return null
@@ -4249,6 +4356,7 @@ class JarvisService : AccessibilityService() {
             // Gemini would spend the tokens thinking: none for 2.5 (allowed there), low for newer models
             if (base.contains("generativelanguage.googleapis.com"))
                 body.put("reasoning_effort", if (body.optString("model").startsWith("gemini-2.5")) "none" else "low")
+            thinkLess(body)
             val con = URL("$base/chat/completions").openConnection() as HttpURLConnection
             con.requestMethod = "POST"
             con.doOutput = true
@@ -4536,6 +4644,7 @@ class JarvisService : AccessibilityService() {
             Cmd.English -> startEnglish()
             is Cmd.Pc -> pcCommand(c)
             is Cmd.Eyes -> if (c.on) startEyes() else stopEyes()
+            Cmd.StopAll -> stopEverything()
             Cmd.VoiceBank -> {
                 startActivity(Intent(this, VoiceBankActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 t("سجّل الجمل البتقولها كتير بصوتك.", "Record your own sentences.")

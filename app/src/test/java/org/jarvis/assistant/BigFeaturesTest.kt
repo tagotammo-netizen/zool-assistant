@@ -28,6 +28,8 @@ class BigFeaturesTest {
         assertEquals(Cmd.Pc("type", "مرحبا"), Commands.parse("زول اكتب في الكمبيوتر مرحبا"))
         assertEquals(Cmd.Eyes(true), Commands.parse("زول التحكم بالعيون"))
         assertEquals(Cmd.Eyes(false), Commands.parse("زول وقف التحكم بالعيون"))
+        assertEquals(Cmd.StopAll, Commands.parse("زول وقف كل حاجة"))
+        assertEquals(Cmd.StopAll, Commands.parse("زول اقفل كل الميزات"))
         Commands.macroNames = setOf("اطلب الغدا")
         assertEquals(Cmd.RunMacro("اطلب الغدا"), Commands.parse("زول اطلب الغدا"))
         Commands.macroNames = emptySet()

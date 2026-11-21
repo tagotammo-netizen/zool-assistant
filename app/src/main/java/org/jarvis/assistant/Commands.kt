@@ -74,6 +74,7 @@ sealed class Cmd {
     object VoiceBank : Cmd()
     data class Pc(val what: String, val text: String = "") : Cmd()   // the phone as a computer's mouse and keyboard
     data class Eyes(val on: Boolean) : Cmd()                 // winks drive the switch scanning
+    object StopAll : Cmd()                                   // every feature that is running stops
     data class Photo(val seconds: Int) : Cmd()
     data class OpenChat(val name: String) : Cmd()
     data class Dictation(val start: Boolean) : Cmd()
@@ -801,6 +802,8 @@ object Commands {
         rest(w, "اكتب في الكمبيوتر", "اكتب للكمبيوتر", "اكتب في التلفزيون", "type on the computer")?.let { r ->
             if (r.isNotBlank()) return Cmd.Pc("type", r)
         }
+        if (t in setOf("وقف كل حاجه", "وقف كل شي", "اقفل كل حاجه", "اقفل كل الميزات", "وقف كل الميزات", "وقف الكل", "اقفل الكل",
+                "stop everything", "stop all")) return Cmd.StopAll
         if (t in setOf("رسل لهجتي للمجتمع", "ارسل لهجتي للمجتمع", "شارك لهجتي مع المجتمع", "contribute my dialect")) return Cmd.ShareDialect(true)
         if (t in setOf("شارك لهجتي", "صدر لهجتي", "ارسل لهجتي", "رسل لهجتي", "share my dialect")) return Cmd.ShareDialect(false)
         if (t in setOf("اكتب الكلام", "اكتب لي الكلام", "اكتب الكلام البيتقال", "اكتب لي الكلام البيتقال")) return Cmd.Captions

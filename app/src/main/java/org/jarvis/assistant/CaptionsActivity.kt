@@ -57,6 +57,21 @@ class CaptionsActivity : AppCompatActivity() {
         setContentView(root)
     }
 
+    private val closer = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: android.content.Context?, i: android.content.Intent?) = finish()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        androidx.core.content.ContextCompat.registerReceiver(this, closer, android.content.IntentFilter(JarvisService.ACTION_CLOSE_SCREENS),
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
+    }
+
+    override fun onPause() {
+        try { unregisterReceiver(closer) } catch (_: Exception) {}
+        super.onPause()
+    }
+
     override fun onStart() {
         super.onStart()
         val s = JarvisService.instance

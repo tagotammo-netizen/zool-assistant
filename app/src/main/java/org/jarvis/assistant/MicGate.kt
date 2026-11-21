@@ -194,7 +194,9 @@ class MicGate(
                 val still = if (voice != null) !voice.speaking else level < gate.threshold() * 0.7
                 if (still) { if (quietSince < 0) quietSince = now } else quietSince = -1L
                 val long = now - captureStart
-                if ((quietSince > 0 && now - quietSince > END_SILENCE_MS && long > 600) || long > MAX_SENTENCE_MS) {
+                // the voice detector already waited for the voice to stop: a shorter wait is enough
+                val endAfter = if (voice != null) 450L else END_SILENCE_MS
+                if ((quietSince > 0 && now - quietSince > endAfter && long > 600) || long > MAX_SENTENCE_MS) {
                     capture = null
                     gate.reset()
                     if (long >= 500) onUtterance(rec.toByteArray())
